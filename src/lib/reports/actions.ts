@@ -118,10 +118,11 @@ export async function getReportRows(
   }
 
   // Step 2: Fetch id_cards for these registrations using registration_id FK
+  // Note: print_count and reprint_count live inside metadata JSONB, not as direct columns
   const regIds = regs.map((r: any) => r.id);
   const { data: cards, error: cardError } = await supabase
     .from('id_cards')
-    .select('registration_id, card_number, status, print_count, reprint_count')
+    .select('registration_id, card_number, status, metadata')
     .in('registration_id', regIds)
     .eq('event_id', eventId);
 
@@ -143,6 +144,7 @@ export async function getReportRows(
     .map((r: any) => {
       const card = cardMap.get(r.id) ?? null;
       const ct = r.card_types as any;
+      const meta = card?.metadata ?? {};
       return {
         registrationNumber: r.registration_number,
         cardNumber: card?.card_number ?? null,
@@ -156,8 +158,8 @@ export async function getReportRows(
         city: r.city,
         verificationStatus: r.status,
         cardStatus: card?.status ?? null,
-        printCount: card?.print_count ?? 0,
-        reprintCount: card?.reprint_count ?? 0,
+        printCount: Number(meta.print_count ?? 0),
+        reprintCount: Number(meta.reprint_count ?? 0),
         createdAt: r.created_at,
         verifiedAt: r.verified_at,
       };
@@ -193,9 +195,10 @@ export async function getReportSummary(
   if (regErr) return { summary: null, error: regErr.message };
 
   // 2. All id_cards for this event
+  // Note: print_count / reprint_count are stored inside metadata JSONB
   const { data: cards, error: cardErr } = await supabase
     .from('id_cards')
-    .select('status, print_count, reprint_count, card_types!card_type_id(is_registered)')
+    .select('status, metadata, card_types!card_type_id(is_registered)')
     .eq('event_id', eventId);
 
   if (cardErr) return { summary: null, error: cardErr.message };
@@ -241,10 +244,13 @@ export async function getReportSummary(
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // Card stats
+  // Card stats — read counts from metadata JSONB
   const cardsPrinted = allCards.filter((c: any) => c.status === 'PRINTED').length;
   const cardsQueued = allCards.filter((c: any) => c.status === 'PRINT_QUEUED').length;
-  const totalReprintCount = allCards.reduce((sum, c: any) => sum + (c.reprint_count ?? 0), 0);
+  const totalReprintCount = allCards.reduce(
+    (sum, c: any) => sum + Number((c as any).metadata?.reprint_count ?? 0),
+    0
+  );
   const specialCards = allCards.filter((c: any) => {
     const ct = (c as any).card_types as any;
     return ct?.is_registered === false;
