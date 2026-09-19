@@ -11,9 +11,20 @@ export interface CardExportOptions {
 
 /**
  * Ensures all <img> elements inside a container are fully loaded and decoded.
- * Prevents snapshotting a stale image bitmap before the new image has finished loading.
+ * Specifically checks that async QR code generation is completed and remote photos are decoded.
  */
-async function ensureImagesLoaded(container: HTMLElement): Promise<void> {
+export async function ensureImagesLoaded(container: HTMLElement): Promise<void> {
+  // 1. If QR code is still generating asynchronously via QRCode.toDataURL, wait until complete
+  const startTime = Date.now();
+  while (Date.now() - startTime < 3000) {
+    const hasGeneratingText = container.textContent?.includes('GENERATING');
+    if (!hasGeneratingText) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+
+  // 2. Ensure all <img> elements are fully loaded and decoded
   const images = Array.from(container.querySelectorAll('img'));
   await Promise.all(
     images.map((img) => {
@@ -225,6 +236,159 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
       setTimeout(resolve, 300);
     }
   });
+
+  iframe.contentWindow?.focus();
+  iframe.contentWindow?.print();
+}
+
+/**
+ * Renders a card element to a high-resolution 300 DPI PNG data URL, ensuring all photos and QR codes are fully loaded.
+ */
+export async function renderCardToDataUrl(element: HTMLElement): Promise<string> {
+  await ensureImagesLoaded(element);
+
+  const exportConfig = {
+    quality: 1,
+    pixelRatio: 3,
+    skipFonts: true,
+    cacheBust: true,
+    includeQueryParams: true,
+    filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
+    onImageErrorHandler: (err: any) => console.warn('Card export resource warning:', err),
+  };
+
+  try {
+    return await toPng(element, exportConfig);
+  } catch (err) {
+    console.warn('Initial 3x capture failed, retrying at 2x ratio:', err);
+    return await toPng(element, {
+      quality: 0.98,
+      pixelRatio: 2,
+      skipFonts: true,
+      cacheBust: true,
+      includeQueryParams: true,
+      filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
+    });
+  }
+}
+
+/**
+ * Sends multiple cards to the physical printer in a single continuous multi-page print job.
+ * Formats every card as a distinct page with exact CR80 dimensions (53.98mm x 85.60mm).
+ * Perfect for Zebra ZC300, Fargo DTC1250e, Evolis, and PVC card tray printers to feed and print
+ * cards sequentially without requiring the operator to click print for each card.
+ */
+export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<void> {
+  if (cardDataUrls.length === 0) return;
+
+  // 1. Tear down any existing print iframe
+  const existingIframe = document.getElementById('cr80-isolated-print-frame');
+  if (existingIframe) {
+    try {
+      existingIframe.remove();
+    } catch (_) {}
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.id = 'cr80-isolated-print-frame';
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '10px';
+  iframe.style.height = '10px';
+  iframe.style.opacity = '0.01';
+  iframe.style.pointerEvents = 'none';
+  iframe.style.border = 'none';
+  iframe.style.zIndex = '-9999';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    console.error('Failed to access isolated print frame document');
+    return;
+  }
+
+  const pagesHtml = cardDataUrls
+    .map(
+      (url, index) => `
+        <div class="card-page">
+          <img class="card-img" src="${url}" alt="ID Card ${index + 1}" />
+        </div>
+      `
+    )
+    .join('\n');
+
+  doc.open();
+  doc.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Batch Print CR80 Cards (${cardDataUrls.length} Cards)</title>
+        <style>
+          @page {
+            size: 53.98mm 85.60mm;
+            margin: 0mm;
+          }
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+          }
+          .card-page {
+            width: 53.98mm;
+            height: 85.60mm;
+            page-break-after: always;
+            break-after: page;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+          }
+          .card-page:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
+          .card-img {
+            width: 53.98mm;
+            height: 85.60mm;
+            object-fit: fill;
+            display: block;
+          }
+        </style>
+      </head>
+      <body>
+        ${pagesHtml}
+      </body>
+    </html>
+  `);
+  doc.close();
+
+  // Wait for all images in the iframe to fully load and decode
+  const imgs = Array.from(doc.querySelectorAll('img'));
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        const onFinish = () => {
+          img.removeEventListener('load', onFinish);
+          img.removeEventListener('error', onFinish);
+          resolve(null);
+        };
+        img.addEventListener('load', onFinish);
+        img.addEventListener('error', onFinish);
+        setTimeout(onFinish, 3000);
+      });
+    })
+  );
+
+  await new Promise((r) => setTimeout(r, 350));
 
   iframe.contentWindow?.focus();
   iframe.contentWindow?.print();

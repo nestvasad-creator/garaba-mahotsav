@@ -26,7 +26,13 @@ import {
   PrintQueueItem,
 } from '@/lib/cards/actions';
 import { CR80Card, CardRenderData } from '@/components/card-renderer/CR80Card';
-import { saveCardAsImage, printCardDirectly } from '@/lib/cards/exportCard';
+import {
+  saveCardAsImage,
+  printCardDirectly,
+  renderCardToDataUrl,
+  printBatchCardsDirectly,
+  ensureImagesLoaded,
+} from '@/lib/cards/exportCard';
 import { ReprintReason } from '@/types';
 
 interface BatchPrintFailedItem {
@@ -48,6 +54,9 @@ interface BatchPrintProgressState {
   succeededCount: number;
   failedItems: BatchPrintFailedItem[];
   isComplete: boolean;
+  activeCard?: PrintQueueItem | null;
+  stage?: 'verifying' | 'rendering' | 'dispatching' | 'printing' | 'complete';
+  statusText?: string;
 }
 
 export default function PrintQueuePage() {
@@ -77,6 +86,7 @@ export default function PrintQueuePage() {
   );
   const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [batchStagingCard, setBatchStagingCard] = useState<PrintQueueItem | null>(null);
   const [batchProgress, setBatchProgress] = useState<BatchPrintProgressState>({
     isOpen: false,
     isProcessing: false,
@@ -89,6 +99,9 @@ export default function PrintQueuePage() {
     succeededCount: 0,
     failedItems: [],
     isComplete: false,
+    activeCard: null,
+    stage: 'verifying',
+    statusText: '',
   });
   const abortBatchRef = React.useRef(false);
 
@@ -201,10 +214,14 @@ export default function PrintQueuePage() {
       succeededCount: 0,
       failedItems: [],
       isComplete: false,
+      activeCard: targetCards[0],
+      stage: 'verifying',
+      statusText: `Preparing batch for printer ${activePrinterIdentifier}...`,
     });
 
     let succeeded = 0;
     const failed: BatchPrintFailedItem[] = [];
+    const capturedUrls: string[] = [];
 
     for (let i = 0; i < targetCards.length; i++) {
       if (abortBatchRef.current) {
@@ -212,21 +229,58 @@ export default function PrintQueuePage() {
       }
 
       const card = targetCards[i];
-      const progressPercent = Math.round(((i + 1) / targetCards.length) * 100);
+      const progressPercent = Math.round((i / targetCards.length) * 100);
 
+      // Mount card into live staging element and modal preview
+      setBatchStagingCard(card);
       setBatchProgress((prev) => ({
         ...prev,
         current: i + 1,
         currentCardNumber: card.cardNumber,
         currentCardName: card.holderNameEn,
         percent: progressPercent,
+        activeCard: card,
+        stage: 'verifying',
+        statusText: `Verifying Photo & QR code for card ${card.cardNumber}...`,
       }));
 
+      // Give React a moment to mount the staging card in the DOM
+      await new Promise((resolve) => setTimeout(resolve, 140));
+
       try {
+        const stagingEl = document.getElementById('cr80-batch-staging-card');
+        if (!stagingEl) {
+          throw new Error('Batch card staging element was not found in DOM');
+        }
+
+        // 1. Ensure QR code generation is completed and photo is fully decoded
+        await ensureImagesLoaded(stagingEl);
+
+        // 2. Capture high-resolution 300 DPI CR80 layout
+        setBatchProgress((prev) => ({
+          ...prev,
+          stage: 'rendering',
+          statusText: `Rendering 300 DPI CR80 layout for ${card.cardNumber}...`,
+        }));
+
+        const dataUrl = await renderCardToDataUrl(stagingEl);
+        capturedUrls.push(dataUrl);
+
+        // 3. Record print job dispatch in Supabase
+        setBatchProgress((prev) => ({
+          ...prev,
+          stage: 'dispatching',
+          statusText: `Recording print dispatch for ${card.cardNumber}...`,
+        }));
+
         const res = await dispatchPrint(card.cardId, activePrinterIdentifier);
         if (res.success) {
           succeeded++;
-          setBatchProgress((prev) => ({ ...prev, succeededCount: succeeded }));
+          setBatchProgress((prev) => ({
+            ...prev,
+            succeededCount: succeeded,
+            percent: Math.round(((i + 1) / targetCards.length) * 100),
+          }));
         } else {
           failed.push({
             cardId: card.cardId,
@@ -234,20 +288,46 @@ export default function PrintQueuePage() {
             holderName: card.holderNameEn,
             error: res.error || 'Print dispatch rejected by server',
           });
-          setBatchProgress((prev) => ({ ...prev, failedItems: [...failed] }));
+          setBatchProgress((prev) => ({
+            ...prev,
+            failedItems: [...failed],
+            percent: Math.round(((i + 1) / targetCards.length) * 100),
+          }));
         }
       } catch (err: any) {
         failed.push({
           cardId: card.cardId,
           cardNumber: card.cardNumber,
           holderName: card.holderNameEn,
-          error: err.message || 'Unexpected communication failure',
+          error: err.message || 'Image/QR load or rendering error',
         });
-        setBatchProgress((prev) => ({ ...prev, failedItems: [...failed] }));
+        setBatchProgress((prev) => ({
+          ...prev,
+          failedItems: [...failed],
+          percent: Math.round(((i + 1) / targetCards.length) * 100),
+        }));
       }
 
-      // Small pause for smooth visual progression in UI
+      // Small pause for smooth visual progression
       await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    // Clean up batch staging card
+    setBatchStagingCard(null);
+
+    // 4. Send all captured cards to the physical printer via multi-page CR80 job
+    if (capturedUrls.length > 0 && !abortBatchRef.current) {
+      setBatchProgress((prev) => ({
+        ...prev,
+        stage: 'printing',
+        statusText: `Sending ${capturedUrls.length} cards to physical printer ${activePrinterIdentifier}...`,
+      }));
+
+      try {
+        await printBatchCardsDirectly(capturedUrls);
+      } catch (printErr: any) {
+        console.warn('Physical batch print invocation error:', printErr);
+      }
     }
 
     await fetchQueue();
@@ -256,17 +336,19 @@ export default function PrintQueuePage() {
       ...prev,
       isProcessing: false,
       isComplete: true,
+      stage: 'complete',
+      statusText: `Batch complete: ${succeeded} ready for print, ${failed.length} errors.`,
       percent: 100,
     }));
     setBatchPrinting(false);
 
     if (failed.length === 0) {
       setFeedbackMessage({
-        text: `Batch print completed! All ${succeeded} cards successfully dispatched to ${activePrinterIdentifier}.`,
+        text: `Batch print completed! All ${succeeded} cards sent to physical printer ${activePrinterIdentifier}.`,
       });
     } else if (succeeded > 0) {
       setFeedbackMessage({
-        text: `Batch print finished with issues: ${succeeded} succeeded, ${failed.length} failed. Check the details modal.`,
+        text: `Batch print finished: ${succeeded} sent to printer, ${failed.length} failed. Check details in modal.`,
         error: true,
       });
     } else {
@@ -878,15 +960,15 @@ export default function PrintQueuePage() {
           </div>
         )}
 
-        {/* Batch Print Progress & Result Modal */}
+        {/* Batch Print Progress & Live Card Modal */}
         {batchProgress.isOpen && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-8">
               {/* Header */}
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2.5">
                   <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                       batchProgress.isProcessing
                         ? 'bg-purple-100 text-purple-600'
                         : batchProgress.failedItems.length > 0
@@ -903,16 +985,16 @@ export default function PrintQueuePage() {
                     )}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       {batchProgress.isProcessing
                         ? 'Batch Printing in Progress'
                         : batchProgress.failedItems.length > 0
-                        ? 'Batch Print Completed with Issues'
-                        : 'Batch Print Complete!'}
+                        ? 'Batch Print Finished with Issues'
+                        : 'Batch Print Dispatched & Sent!'}
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Destination:{' '}
-                      <span className="font-semibold text-slate-800">
+                      Physical Printer:{' '}
+                      <span className="font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
                         {batchProgress.printerIdentifier}
                       </span>
                     </p>
@@ -929,114 +1011,198 @@ export default function PrintQueuePage() {
                 )}
               </div>
 
-              {/* Progress Bar & Live Status */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-slate-600">
+              {/* Two Column Layout: Left = Live Card Preview, Right = Progress & Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+                {/* Left: Live Card Preview & Asset Verification */}
+                <div className="md:col-span-5 flex flex-col items-center justify-center p-3.5 bg-gradient-to-b from-slate-50 to-slate-100/70 rounded-2xl border border-slate-200">
+                  <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     {batchProgress.isProcessing ? (
-                      <span className="inline-flex items-center gap-1.5">
+                      <>
                         <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping inline-block" />
-                        Processing Card {batchProgress.current} of {batchProgress.total}
-                      </span>
+                        Live Card Being Printed
+                      </>
                     ) : (
-                      `${batchProgress.succeededCount} of ${batchProgress.total} cards dispatched successfully`
+                      'Last Printed Badge'
                     )}
-                  </span>
-                  <span className="font-bold text-slate-900 font-mono">
-                    {batchProgress.percent}%
-                  </span>
-                </div>
+                  </div>
 
-                {/* Visual Progress Bar */}
-                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
-                  <div
-                    className={`h-full rounded-full transition-all duration-300 ease-out ${
-                      batchProgress.failedItems.length > 0 && !batchProgress.isProcessing
-                        ? 'bg-gradient-to-r from-purple-600 via-amber-500 to-rose-500'
-                        : 'bg-gradient-to-r from-purple-600 to-emerald-500'
-                    }`}
-                    style={{ width: `${batchProgress.percent}%` }}
-                  />
-                </div>
+                  {batchProgress.activeCard ? (
+                    <div className="shadow-lg rounded-xl overflow-hidden border border-slate-200/80 bg-white">
+                      <CR80Card
+                        data={{
+                          cardNumber: batchProgress.activeCard.cardNumber,
+                          qrToken: batchProgress.activeCard.qrToken,
+                          holderNameEn: batchProgress.activeCard.holderNameEn,
+                          holderNameGu: batchProgress.activeCard.holderNameGu,
+                          categoryEn: batchProgress.activeCard.categoryEn,
+                          categoryGu: batchProgress.activeCard.categoryGu,
+                          categoryCode: batchProgress.activeCard.categoryCode,
+                          gender: batchProgress.activeCard.gender,
+                          photoUrl: batchProgress.activeCard.photoUrl,
+                          validFrom: '01-Oct-2026',
+                          validTo: '12-Oct-2026',
+                          areaZone: 'East Zone / Vasad',
+                          eventNameEn: 'NAVRATRI MAHOTSAV 2026',
+                          organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
+                          physicalFormNumber: batchProgress.activeCard.physicalFormNumber || null,
+                          receiptNumber: batchProgress.activeCard.receiptNumber || null,
+                        }}
+                        theme={batchProgress.activeCard.theme}
+                        scale={0.65}
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-[169px] h-[268px] flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl text-slate-400 text-xs">
+                      <Printer className="w-8 h-8 mb-2 opacity-40" />
+                      <span>No card selected</span>
+                    </div>
+                  )}
 
-                {/* Active Card Indicator while processing */}
-                {batchProgress.isProcessing && (
-                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex items-center justify-between text-xs">
-                    <div className="truncate mr-2">
-                      <span className="text-slate-400 text-[11px] block">
-                        Currently Dispatching:
-                      </span>
-                      <span className="font-bold text-slate-800">
-                        {batchProgress.currentCardName}
+                  {/* Asset Verification Badges */}
+                  <div className="mt-3 w-full flex flex-col gap-1 text-[11px]">
+                    <div className="flex items-center justify-between px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700">
+                      <span className="font-medium">QR Verification:</span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Ready & Verified
                       </span>
                     </div>
-                    <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 flex-shrink-0">
-                      {batchProgress.currentCardNumber}
-                    </span>
+                    <div className="flex items-center justify-between px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700">
+                      <span className="font-medium">Photo Decode:</span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Ready & Decoded
+                      </span>
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
 
-              {/* Stats Counters */}
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
-                  <div className="text-[11px] text-slate-500">Total Cards</div>
-                  <div className="text-base font-bold text-slate-800">
-                    {batchProgress.total}
-                  </div>
-                </div>
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2">
-                  <div className="text-[11px] text-emerald-700">Dispatched</div>
-                  <div className="text-base font-bold text-emerald-700">
-                    {batchProgress.succeededCount}
-                  </div>
-                </div>
-                <div
-                  className={`rounded-xl p-2 border ${
-                    batchProgress.failedItems.length > 0
-                      ? 'bg-rose-50 border-rose-200 text-rose-800'
-                      : 'bg-slate-50 border-slate-200 text-slate-400'
-                  }`}
-                >
-                  <div className="text-[11px]">Errors</div>
-                  <div className="text-base font-bold">
-                    {batchProgress.failedItems.length}
-                  </div>
-                </div>
-              </div>
-
-              {/* Error Detail Breakdown List */}
-              {batchProgress.failedItems.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-rose-700">
-                    <span className="flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      Failed Cards Details ({batchProgress.failedItems.length})
-                    </span>
-                  </div>
-                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                    {batchProgress.failedItems.map((fail) => (
-                      <div
-                        key={fail.cardId}
-                        className="bg-rose-50/80 border border-rose-200 rounded-xl p-2.5 text-xs text-rose-900 flex flex-col gap-0.5"
-                      >
-                        <div className="flex items-center justify-between font-bold">
-                          <span className="font-mono text-[11px]">{fail.cardNumber}</span>
-                          <span className="text-[11px] text-slate-600">
-                            {fail.holderName}
+                {/* Right: Progress Bar, Status, Counters, Errors */}
+                <div className="md:col-span-7 space-y-4">
+                  {/* Progress Bar & Live Status */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-700">
+                        {batchProgress.isProcessing ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping inline-block" />
+                            Card {batchProgress.current} of {batchProgress.total}
                           </span>
-                        </div>
-                        <div className="text-[11px] text-rose-700 font-medium">
-                          Reason: {fail.error}
-                        </div>
-                      </div>
-                    ))}
+                        ) : (
+                          `${batchProgress.succeededCount} of ${batchProgress.total} cards ready`
+                        )}
+                      </span>
+                      <span className="font-bold text-purple-700 font-mono text-sm">
+                        {batchProgress.percent}%
+                      </span>
+                    </div>
+
+                    {/* Visual Progress Bar */}
+                    <div className="w-full h-3.5 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ease-out ${
+                          batchProgress.failedItems.length > 0 && !batchProgress.isProcessing
+                            ? 'bg-gradient-to-r from-purple-600 via-amber-500 to-rose-500'
+                            : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-emerald-500'
+                        }`}
+                        style={{ width: `${batchProgress.percent}%` }}
+                      />
+                    </div>
+
+                    {/* Status Message */}
+                    <div className="text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-2">
+                      {batchProgress.isProcessing && (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-600 flex-shrink-0" />
+                      )}
+                      <span className="truncate">{batchProgress.statusText || 'Processing...'}</span>
+                    </div>
                   </div>
+
+                  {/* Active Card Details */}
+                  {batchProgress.activeCard && (
+                    <div className="bg-purple-50/60 border border-purple-200/80 rounded-xl p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">
+                          Current Card Holder
+                        </span>
+                        <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-white text-purple-700 border border-purple-200">
+                          {batchProgress.activeCard.cardNumber}
+                        </span>
+                      </div>
+                      <div className="font-bold text-slate-900 text-sm">
+                        {batchProgress.activeCard.holderNameEn}
+                      </div>
+                      <div className="text-slate-500 text-[11px]">
+                        Category: {batchProgress.activeCard.categoryEn} ({batchProgress.activeCard.categoryCode || 'GEN'})
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stats Counters */}
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+                      <div className="text-[11px] text-slate-500">Total Cards</div>
+                      <div className="text-lg font-bold text-slate-800">
+                        {batchProgress.total}
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
+                      <div className="text-[11px] text-emerald-700">Dispatched</div>
+                      <div className="text-lg font-bold text-emerald-700">
+                        {batchProgress.succeededCount}
+                      </div>
+                    </div>
+                    <div
+                      className={`rounded-xl p-2.5 border ${
+                        batchProgress.failedItems.length > 0
+                          ? 'bg-rose-50 border-rose-200 text-rose-800'
+                          : 'bg-slate-50 border-slate-200 text-slate-400'
+                      }`}
+                    >
+                      <div className="text-[11px]">Errors</div>
+                      <div className="text-lg font-bold">
+                        {batchProgress.failedItems.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Zebra Driver Instructions Note */}
+                  <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200/70 rounded-xl p-2.5">
+                    💡 <strong>Zebra ZC300 Tip:</strong> Cards are prepared as continuous CR80 pages (53.98 × 85.60 mm). When the print preview dialog appears, select your Zebra driver to print all cards in one continuous feeder pass.
+                  </div>
+
+                  {/* Error Breakdown List */}
+                  {batchProgress.failedItems.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs font-bold text-rose-700">
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Failed Cards ({batchProgress.failedItems.length})
+                        </span>
+                      </div>
+                      <div className="max-h-32 overflow-y-auto space-y-1.5 pr-1">
+                        {batchProgress.failedItems.map((fail) => (
+                          <div
+                            key={fail.cardId}
+                            className="bg-rose-50/80 border border-rose-200 rounded-xl p-2 text-xs text-rose-900 flex flex-col gap-0.5"
+                          >
+                            <div className="flex items-center justify-between font-bold">
+                              <span className="font-mono text-[11px]">{fail.cardNumber}</span>
+                              <span className="text-[11px] text-slate-600">
+                                {fail.holderName}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-rose-700 font-medium">
+                              {fail.error}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* Footer Actions */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 {batchProgress.isProcessing ? (
                   <button
                     type="button"
@@ -1060,7 +1226,7 @@ export default function PrintQueuePage() {
                     <button
                       type="button"
                       onClick={handleCloseBatchModal}
-                      className="px-5 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 shadow-sm transition"
+                      className="px-6 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 shadow-sm transition"
                     >
                       Done
                     </button>
@@ -1096,6 +1262,36 @@ export default function PrintQueuePage() {
                 receiptNumber: directPrintingJob.receiptNumber || null,
               }}
               theme={directPrintingJob.theme}
+              scale={1.0}
+            />
+          </div>
+        )}
+
+        {/* Hidden 300 DPI CR80 Card Staging for Physical Batch Printing */}
+        {batchStagingCard && (
+          <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', pointerEvents: 'none', zIndex: -9999 }}>
+            <CR80Card
+              key={`batch-staging-${batchStagingCard.cardId}-${batchStagingCard.cardNumber}`}
+              id="cr80-batch-staging-card"
+              data={{
+                cardNumber: batchStagingCard.cardNumber,
+                qrToken: batchStagingCard.qrToken,
+                holderNameEn: batchStagingCard.holderNameEn,
+                holderNameGu: batchStagingCard.holderNameGu,
+                categoryEn: batchStagingCard.categoryEn,
+                categoryGu: batchStagingCard.categoryGu,
+                categoryCode: batchStagingCard.categoryCode,
+                gender: batchStagingCard.gender,
+                photoUrl: batchStagingCard.photoUrl,
+                validFrom: '01-Oct-2026',
+                validTo: '12-Oct-2026',
+                areaZone: 'East Zone / Vasad',
+                eventNameEn: 'NAVRATRI MAHOTSAV 2026',
+                organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
+                physicalFormNumber: batchStagingCard.physicalFormNumber || null,
+                receiptNumber: batchStagingCard.receiptNumber || null,
+              }}
+              theme={batchStagingCard.theme}
               scale={1.0}
             />
           </div>

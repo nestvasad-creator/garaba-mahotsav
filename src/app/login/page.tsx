@@ -2,16 +2,13 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInAction, seedInitialSuperAdmin } from '@/lib/auth/actions';
+import { signInAction } from '@/lib/auth/actions';
 import {
   CreditCard,
   Lock,
   Mail,
   ArrowRight,
-  ShieldCheck,
   AlertCircle,
-  CheckCircle,
-  Sparkles,
 } from 'lucide-react';
 
 export default function LoginPage() {
@@ -21,8 +18,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [seedSuccess, setSeedSuccess] = useState<string | null>(null);
-  const [seeding, setSeeding] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,25 +37,6 @@ export default function LoginPage() {
     } catch (err: any) {
       setErrorMsg(err.message || 'An unexpected error occurred');
       setLoading(false);
-    }
-  };
-
-  const handleCreateDefaultAdmin = async () => {
-    setSeeding(true);
-    setErrorMsg(null);
-    try {
-      const res = await seedInitialSuperAdmin();
-      if (res.success) {
-        setEmail('superadmin@test.com');
-        setPassword('TestUser@2026');
-        setSeedSuccess('Test Super Admin ready! Click Sign In.');
-      } else {
-        setErrorMsg((res as any).error || (res as any).message || 'Admin initialization note: user may already exist.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Error creating initial admin.');
-    } finally {
-      setSeeding(false);
     }
   };
 
@@ -89,13 +65,6 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {seedSuccess && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              <span>{seedSuccess}</span>
-            </div>
-          )}
-
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
@@ -113,7 +82,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   required
-                  placeholder="e.g. deo@test.com or superadmin@test.com"
+                  placeholder="name@organization.org"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full text-xs rounded-xl bg-slate-900/90 border border-slate-700 pl-10 pr-3.5 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
@@ -147,22 +116,6 @@ export default function LoginPage() {
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-
-          {/* Quick Setup for Initial Super Admin */}
-          <div className="border-t border-slate-700/80 pt-4 text-center">
-            <p className="text-[11px] text-slate-400 mb-2">
-              Default password for all test roles: <strong className="text-amber-300">TestUser@2026</strong>
-            </p>
-            <button
-              type="button"
-              onClick={handleCreateDefaultAdmin}
-              disabled={seeding}
-              className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg transition font-medium"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              {seeding ? 'Initializing...' : 'Pre-fill Test Super Admin (superadmin@test.com)'}
-            </button>
-          </div>
         </div>
       </div>
 
