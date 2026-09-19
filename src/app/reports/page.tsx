@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   FileSpreadsheet,
@@ -21,16 +21,28 @@ import {
   RotateCcw,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Loader2,
 } from 'lucide-react';
 import { exportToCsvWithBom } from '@/lib/gujarati/export';
 import {
   getReportRows,
   getReportSummary,
   getReportCategories,
+  exportAllReportRows,
   ReportRow,
   ReportSummary,
   ReportFilters,
+  ReportSortKey,
 } from '@/lib/reports/actions';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,15 +78,61 @@ function cardStatusBadge(status: string | null) {
   return map[status] ?? 'bg-slate-100 text-slate-600';
 }
 
-// ─── Mini Bar Chart (sparkline) ───────────────────────────────────────────────
+function generateCsv(rows: ReportRow[]): string {
+  const headers = [
+    'Registration No',
+    'Card No',
+    'Full Name (EN)',
+    'Full Name (GU)',
+    'Category',
+    'Gender',
+    'Mobile',
+    'Area / Zone',
+    'City',
+    'Verification Status',
+    'Card Status',
+    'Print Count',
+    'Reprint Count',
+    'Registered On',
+    'Verified On',
+  ].join(',');
+
+  const escapeCell = (v: string | number | null | undefined) =>
+    `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+  const csvRows = rows.map((r) =>
+    [
+      escapeCell(r.registrationNumber),
+      escapeCell(r.cardNumber ?? '—'),
+      escapeCell(r.holderNameEn),
+      escapeCell(r.holderNameGu),
+      escapeCell(r.categoryEn),
+      escapeCell(r.gender),
+      escapeCell(r.mobile),
+      escapeCell(r.areaZone ?? ''),
+      escapeCell(r.city ?? ''),
+      escapeCell(r.verificationStatus),
+      escapeCell(r.cardStatus ?? 'NOT GENERATED'),
+      r.printCount,
+      r.reprintCount,
+      escapeCell(fmtDate(r.createdAt)),
+      escapeCell(fmtDate(r.verifiedAt)),
+    ].join(',')
+  );
+
+  return `${headers}\n${csvRows.join('\n')}`;
+}
+
+// ─── Mini Bar Chart ───────────────────────────────────────────────────────────
 
 function MiniBarChart({ data }: { data: Array<{ date: string; count: number }> }) {
-  if (!data.length) return <div className="text-xs text-slate-400 py-4 text-center">No data in last 30 days</div>;
+  if (!data || !data.length)
+    return <div className="text-xs text-slate-400 py-4 text-center">No data in last 14 days</div>;
   const max = Math.max(...data.map((d) => d.count), 1);
-  const last7 = data.slice(-14); // show last 14 days
+  const last14 = data.slice(-14);
   return (
     <div className="flex items-end gap-1 h-14 w-full">
-      {last7.map((d) => (
+      {last14.map((d) => (
         <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5 group">
           <div
             className="w-full rounded-t bg-teal-400 group-hover:bg-teal-500 transition-all"
@@ -90,7 +148,7 @@ function MiniBarChart({ data }: { data: Array<{ date: string; count: number }> }
   );
 }
 
-// ─── KPI Card ────────────────────────────────────────────────────────────────
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
 
 function KpiCard({
   label,
@@ -108,7 +166,9 @@ function KpiCard({
   return (
     <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{label}</span>
+        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+          {label}
+        </span>
         <Icon className={`w-4 h-4 ${color}`} />
       </div>
       <div className={`text-2xl font-bold mt-0.5 ${color}`}>{value}</div>
@@ -117,9 +177,137 @@ function KpiCard({
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Pagination Bar ───────────────────────────────────────────────────────────
 
-type SortKey = 'registrationNumber' | 'holderNameEn' | 'categoryEn' | 'createdAt' | 'printCount';
+function PaginationBar({
+  page,
+  totalPages,
+  totalCount,
+  pageSize,
+  loading,
+  onPage,
+  onPageSize,
+}: {
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  pageSize: PageSizeOption;
+  loading: boolean;
+  onPage: (p: number) => void;
+  onPageSize: (s: PageSizeOption) => void;
+}) {
+  if (totalPages <= 1 && totalCount === 0) return null;
+
+  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalCount);
+
+  // Show smart page numbers
+  const pages: (number | '…')[] = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push('…');
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+      pages.push(i);
+    }
+    if (page < totalPages - 2) pages.push('…');
+    pages.push(totalPages);
+  }
+
+  const btnBase =
+    'h-8 min-w-[2rem] px-2 rounded-lg text-xs font-semibold flex items-center justify-center transition select-none';
+  const btnActive = 'bg-blue-600 text-white shadow-sm';
+  const btnNormal = 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50';
+  const btnDisabled = 'border border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed';
+
+  return (
+    <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+      <div className="text-xs text-slate-500 flex items-center gap-3">
+        <span>
+          Showing{' '}
+          <strong className="text-slate-700">
+            {from}–{to}
+          </strong>{' '}
+          of <strong className="text-slate-700">{totalCount.toLocaleString()}</strong> records
+        </span>
+
+        <span className="flex items-center gap-1.5 text-slate-500">
+          Rows per page:
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value) as PageSizeOption)}
+            disabled={loading}
+            className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
+          >
+            {PAGE_SIZE_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPage(1)}
+          disabled={page === 1 || loading}
+          className={`${btnBase} ${page === 1 || loading ? btnDisabled : btnNormal}`}
+          title="First page"
+        >
+          <ChevronsLeft className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => onPage(page - 1)}
+          disabled={page === 1 || loading}
+          className={`${btnBase} ${page === 1 || loading ? btnDisabled : btnNormal}`}
+          title="Previous page"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+        </button>
+
+        {pages.map((p, i) =>
+          p === '…' ? (
+            <span key={`ellipsis-${i}`} className="px-1 text-slate-400 text-xs select-none">
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => onPage(p as number)}
+              disabled={loading}
+              className={`${btnBase} ${p === page ? btnActive : loading ? btnDisabled : btnNormal}`}
+            >
+              {p}
+            </button>
+          )
+        )}
+
+        <button
+          onClick={() => onPage(page + 1)}
+          disabled={page === totalPages || loading}
+          className={`${btnBase} ${page === totalPages || loading ? btnDisabled : btnNormal}`}
+          title="Next page"
+        >
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => onPage(totalPages)}
+          disabled={page === totalPages || loading}
+          className={`${btnBase} ${page === totalPages || loading ? btnDisabled : btnNormal}`}
+          title="Last page"
+        >
+          <ChevronsRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
   const [rows, setRows] = useState<ReportRow[]>([]);
@@ -130,7 +318,7 @@ export default function ReportsPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // ── Filters & Search ──────────────────────────────────────────────────────
   const [filters, setFilters] = useState<ReportFilters>({
     categoryCode: 'ALL',
     status: 'ALL',
@@ -138,13 +326,51 @@ export default function ReportsPage() {
     dateFrom: '',
     dateTo: '',
   });
-  const [searchText, setSearchText] = useState('');
 
-  // Sort
-  const [sortKey, setSortKey] = useState<SortKey>('createdAt');
+  // Search input state + debounced value
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ── Pagination State ──────────────────────────────────────────────────────
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSizeOption>(50);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  // ── Server-Side Sorting ───────────────────────────────────────────────────
+  const [sortKey, setSortKey] = useState<ReportSortKey>('createdAt');
   const [sortAsc, setSortAsc] = useState(false);
 
-  // ── Data Fetching ──────────────────────────────────────────────────────────
+  // ── Export State ──────────────────────────────────────────────────────────
+  const [exportingAll, setExportingAll] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  // Handle Search Debounce (350ms)
+  const handleSearchChange = (val: string) => {
+    setSearchInput(val);
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setPage(1);
+      setDebouncedSearch(val);
+    }, 350);
+  };
+
+  // Close export menu on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // ── Data Fetching ─────────────────────────────────────────────────────────
 
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true);
@@ -157,18 +383,26 @@ export default function ReportsPage() {
   const loadRows = useCallback(async () => {
     setLoading(true);
     setError(null);
+
     const activeFilters: ReportFilters = {
       categoryCode: filters.categoryCode !== 'ALL' ? filters.categoryCode : undefined,
       status: filters.status !== 'ALL' ? filters.status : undefined,
       gender: filters.gender !== 'ALL' ? filters.gender : undefined,
       dateFrom: filters.dateFrom || undefined,
       dateTo: filters.dateTo || undefined,
+      search: debouncedSearch.trim() || undefined,
     };
-    const res = await getReportRows(activeFilters);
-    if (res.error) setError(res.error);
-    else setRows(res.rows);
+
+    const res = await getReportRows(activeFilters, page, pageSize, sortKey, sortAsc);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setRows(res.rows);
+      setTotalCount(res.totalCount);
+      setTotalPages(res.totalPages);
+    }
     setLoading(false);
-  }, [filters]);
+  }, [filters, debouncedSearch, page, pageSize, sortKey, sortAsc]);
 
   const loadCategories = useCallback(async () => {
     const cats = await getReportCategories();
@@ -184,108 +418,94 @@ export default function ReportsPage() {
     loadRows();
   }, [loadRows]);
 
-  // ── Sorting + Search filter ────────────────────────────────────────────────
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortAsc((p) => !p);
-    else { setSortKey(key); setSortAsc(true); }
+  const applyFilter = (updater: (prev: ReportFilters) => ReportFilters) => {
+    setPage(1);
+    setFilters(updater);
   };
 
-  const SortIcon = ({ k }: { k: SortKey }) =>
-    sortKey === k
-      ? sortAsc
-        ? <ChevronUp className="w-3 h-3 inline ml-0.5 text-blue-500" />
-        : <ChevronDown className="w-3 h-3 inline ml-0.5 text-blue-500" />
-      : null;
+  const applyPageSize = (s: PageSizeOption) => {
+    setPage(1);
+    setPageSize(s);
+  };
 
-  const visibleRows = [...rows]
-    .filter((r) => {
-      if (!searchText.trim()) return true;
-      const q = searchText.toLowerCase();
-      return (
-        r.holderNameEn.toLowerCase().includes(q) ||
-        r.holderNameGu.includes(q) ||
-        r.registrationNumber.toLowerCase().includes(q) ||
-        (r.mobile ?? '').includes(q) ||
-        (r.cardNumber ?? '').toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      let av: string | number = '', bv: string | number = '';
-      if (sortKey === 'registrationNumber') { av = a.registrationNumber; bv = b.registrationNumber; }
-      else if (sortKey === 'holderNameEn') { av = a.holderNameEn; bv = b.holderNameEn; }
-      else if (sortKey === 'categoryEn') { av = a.categoryEn; bv = b.categoryEn; }
-      else if (sortKey === 'createdAt') { av = a.createdAt; bv = b.createdAt; }
-      else if (sortKey === 'printCount') { av = a.printCount; bv = b.printCount; }
-      if (av < bv) return sortAsc ? -1 : 1;
-      if (av > bv) return sortAsc ? 1 : -1;
-      return 0;
-    });
+  // ── Sorting ───────────────────────────────────────────────────────────────
 
-  // ── CSV Export ────────────────────────────────────────────────────────────
+  const handleSort = (key: ReportSortKey) => {
+    if (sortKey === key) {
+      setSortAsc((p) => !p);
+    } else {
+      setSortKey(key);
+      setSortAsc(key === 'createdAt' ? false : true);
+    }
+    setPage(1);
+  };
 
-  const handleExportCsv = () => {
-    if (!visibleRows.length) {
-      setFeedback('No data to export.');
+  const SortIcon = ({ k }: { k: ReportSortKey }) =>
+    sortKey === k ? (
+      sortAsc ? (
+        <ChevronUp className="w-3 h-3 inline ml-0.5 text-blue-500" />
+      ) : (
+        <ChevronDown className="w-3 h-3 inline ml-0.5 text-blue-500" />
+      )
+    ) : null;
+
+  // ── CSV Exports (Page vs All) ─────────────────────────────────────────────
+
+  const handleExportCurrentPage = () => {
+    setShowExportMenu(false);
+    if (!rows.length) {
+      setFeedback('No rows available on current page to export.');
       setTimeout(() => setFeedback(null), 3000);
       return;
     }
 
-    const headers = [
-      'Registration No',
-      'Card No',
-      'Full Name (EN)',
-      'Full Name (GU)',
-      'Category',
-      'Gender',
-      'Mobile',
-      'Area / Zone',
-      'City',
-      'Verification Status',
-      'Card Status',
-      'Print Count',
-      'Reprint Count',
-      'Registered On',
-      'Verified On',
-    ].join(',');
-
-    const escapeCell = (v: string | number | null | undefined) =>
-      `"${String(v ?? '').replace(/"/g, '""')}"`;
-
-    const csvRows = visibleRows.map((r) =>
-      [
-        escapeCell(r.registrationNumber),
-        escapeCell(r.cardNumber ?? '—'),
-        escapeCell(r.holderNameEn),
-        escapeCell(r.holderNameGu),
-        escapeCell(r.categoryEn),
-        escapeCell(r.gender),
-        escapeCell(r.mobile),
-        escapeCell(r.areaZone ?? ''),
-        escapeCell(r.city ?? ''),
-        escapeCell(r.verificationStatus),
-        escapeCell(r.cardStatus ?? 'NOT GENERATED'),
-        r.printCount,
-        r.reprintCount,
-        escapeCell(fmtDate(r.createdAt)),
-        escapeCell(fmtDate(r.verifiedAt)),
-      ].join(',')
-    );
-
+    const csvContent = generateCsv(rows);
     exportToCsvWithBom(
-      `event_report_${new Date().toISOString().split('T')[0]}`,
-      `${headers}\n${csvRows.join('\n')}`
+      `event_report_page${page}_${new Date().toISOString().split('T')[0]}`,
+      csvContent
     );
-
-    setFeedback(`Exported ${visibleRows.length} rows to CSV successfully.`);
+    setFeedback(`Exported ${rows.length} rows (page ${page}) to CSV.`);
     setTimeout(() => setFeedback(null), 4000);
+  };
+
+  const handleExportAll = async () => {
+    setShowExportMenu(false);
+    setExportingAll(true);
+    setFeedback('Preparing complete dataset export...');
+
+    try {
+      const activeFilters: ReportFilters = {
+        categoryCode: filters.categoryCode !== 'ALL' ? filters.categoryCode : undefined,
+        status: filters.status !== 'ALL' ? filters.status : undefined,
+        gender: filters.gender !== 'ALL' ? filters.gender : undefined,
+        dateFrom: filters.dateFrom || undefined,
+        dateTo: filters.dateTo || undefined,
+        search: debouncedSearch.trim() || undefined,
+      };
+
+      const res = await exportAllReportRows(activeFilters);
+      if (res.error || !res.rows.length) {
+        setFeedback(res.error || 'No records found matching filters for export.');
+      } else {
+        const csvContent = generateCsv(res.rows);
+        exportToCsvWithBom(
+          `event_full_report_${new Date().toISOString().split('T')[0]}`,
+          csvContent
+        );
+        setFeedback(`Exported all ${res.rows.length.toLocaleString()} matching records to CSV!`);
+      }
+    } catch (err: any) {
+      setFeedback(`Export failed: ${err.message}`);
+    } finally {
+      setExportingAll(false);
+      setTimeout(() => setFeedback(null), 5000);
+    }
   };
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
         <div className="flex items-center space-x-4">
@@ -298,32 +518,68 @@ export default function ReportsPage() {
               Reports &amp; Analytics
             </h1>
             <p className="text-xs text-slate-500">
-              Live data from database — registrations, cards, print audit
+              Live database analytics · Page {page} of {totalPages || 1} ·{' '}
+              {totalCount.toLocaleString()} matching records
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { loadSummary(); loadRows(); }}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition shadow-sm"
+            onClick={() => {
+              loadSummary();
+              loadRows();
+            }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition shadow-sm disabled:opacity-50"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button
-            onClick={handleExportCsv}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
-          </button>
+
+          {/* Export Dropdown */}
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              onClick={() => setShowExportMenu((p) => !p)}
+              disabled={exportingAll}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 transition shadow-sm disabled:opacity-60"
+            >
+              {exportingAll ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>{exportingAll ? 'Exporting…' : 'Export CSV'}</span>
+              <ChevronDown className="w-3 h-3 ml-0.5 opacity-70" />
+            </button>
+
+            {showExportMenu && (
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-2xl shadow-xl py-1.5 z-30 animate-in fade-in slide-in-from-top-1 duration-150">
+                <button
+                  onClick={handleExportCurrentPage}
+                  className="w-full px-4 py-2.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center justify-between"
+                >
+                  <span>Export Current Page</span>
+                  <span className="text-[10px] text-slate-400 font-mono">({rows.length})</span>
+                </button>
+                <div className="border-t border-slate-100 my-1" />
+                <button
+                  onClick={handleExportAll}
+                  className="w-full px-4 py-2.5 text-left text-xs font-medium text-teal-700 hover:bg-teal-50 flex items-center justify-between"
+                >
+                  <span className="font-semibold">Export All Filtered</span>
+                  <span className="text-[10px] text-teal-600 font-mono font-bold">
+                    ({totalCount.toLocaleString()})
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto w-full p-6 flex-1 space-y-6">
-
-        {/* Feedback */}
+        {/* Feedback / Error */}
         {feedback && (
           <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-xs font-semibold flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-teal-600 shrink-0" />
@@ -341,16 +597,55 @@ export default function ReportsPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
           {summaryLoading ? (
             Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm animate-pulse h-24" />
+              <div
+                key={i}
+                className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm animate-pulse h-24"
+              />
             ))
           ) : summary ? (
             <>
-              <KpiCard label="Total Registrations" value={summary.totalRegistrations} sub="All time" color="text-slate-900" icon={Users} />
-              <KpiCard label="Approved" value={summary.approved} sub={`${summary.totalRegistrations > 0 ? Math.round((summary.approved / summary.totalRegistrations) * 100) : 0}% of total`} color="text-emerald-600" icon={CheckCircle} />
-              <KpiCard label="Pending Verification" value={summary.underVerification} sub="In review queue" color="text-amber-600" icon={Clock} />
-              <KpiCard label="Cards Printed" value={summary.cardsPrinted} sub={`${summary.cardsQueued} in queue`} color="text-purple-600" icon={Printer} />
-              <KpiCard label="Special / VIP Cards" value={summary.specialCards} sub="Non-registered" color="text-rose-600" icon={ShieldCheck} />
-              <KpiCard label="Reprint Audit" value={summary.totalReprintCount} sub="Controlled & logged" color="text-orange-600" icon={RotateCcw} />
+              <KpiCard
+                label="Total Registrations"
+                value={summary.totalRegistrations.toLocaleString()}
+                sub="All time"
+                color="text-slate-900"
+                icon={Users}
+              />
+              <KpiCard
+                label="Approved"
+                value={summary.approved.toLocaleString()}
+                sub={`${summary.totalRegistrations > 0 ? Math.round((summary.approved / summary.totalRegistrations) * 100) : 0}% of total`}
+                color="text-emerald-600"
+                icon={CheckCircle}
+              />
+              <KpiCard
+                label="Pending Verification"
+                value={summary.underVerification.toLocaleString()}
+                sub="In review queue"
+                color="text-amber-600"
+                icon={Clock}
+              />
+              <KpiCard
+                label="Cards Printed"
+                value={summary.cardsPrinted.toLocaleString()}
+                sub={`${summary.cardsQueued} in queue`}
+                color="text-purple-600"
+                icon={Printer}
+              />
+              <KpiCard
+                label="Special / VIP Cards"
+                value={summary.specialCards.toLocaleString()}
+                sub="Non-registered"
+                color="text-rose-600"
+                icon={ShieldCheck}
+              />
+              <KpiCard
+                label="Reprint Audit"
+                value={summary.totalReprintCount.toLocaleString()}
+                sub="Controlled & logged"
+                color="text-orange-600"
+                icon={RotateCcw}
+              />
             </>
           ) : null}
         </div>
@@ -358,7 +653,6 @@ export default function ReportsPage() {
         {/* ── Secondary Stats Row ── */}
         {summary && !summaryLoading && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-
             {/* Gender Breakdown */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
               <h4 className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -368,7 +662,11 @@ export default function ReportsPage() {
               <div className="space-y-2">
                 {[
                   { label: 'Male', value: summary.genderBreakdown.MALE, color: 'bg-blue-400' },
-                  { label: 'Female', value: summary.genderBreakdown.FEMALE, color: 'bg-pink-400' },
+                  {
+                    label: 'Female',
+                    value: summary.genderBreakdown.FEMALE,
+                    color: 'bg-pink-400',
+                  },
                   { label: 'Other', value: summary.genderBreakdown.OTHER, color: 'bg-slate-300' },
                 ].map(({ label, value, color }) => {
                   const total = summary.totalRegistrations || 1;
@@ -377,10 +675,15 @@ export default function ReportsPage() {
                     <div key={label}>
                       <div className="flex justify-between text-xs mb-0.5">
                         <span className="text-slate-600 font-medium">{label}</span>
-                        <span className="text-slate-500 font-mono">{value} ({pct}%)</span>
+                        <span className="text-slate-500 font-mono">
+                          {value.toLocaleString()} ({pct}%)
+                        </span>
                       </div>
                       <div className="w-full bg-slate-100 rounded-full h-1.5">
-                        <div className={`${color} h-1.5 rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                        <div
+                          className={`${color} h-1.5 rounded-full transition-all`}
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
                   );
@@ -397,14 +700,22 @@ export default function ReportsPage() {
               <div className="space-y-1.5 text-xs">
                 {[
                   { label: 'Approved', value: summary.approved, color: 'text-emerald-600' },
-                  { label: 'Under Verification', value: summary.underVerification, color: 'text-amber-600' },
-                  { label: 'Correction Required', value: summary.correctionRequired, color: 'text-orange-600' },
+                  {
+                    label: 'Under Verification',
+                    value: summary.underVerification,
+                    color: 'text-amber-600',
+                  },
+                  {
+                    label: 'Correction Required',
+                    value: summary.correctionRequired,
+                    color: 'text-orange-600',
+                  },
                   { label: 'Rejected', value: summary.rejected, color: 'text-red-600' },
                   { label: 'Draft', value: summary.draft, color: 'text-slate-500' },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="flex justify-between items-center">
                     <span className="text-slate-600">{label}</span>
-                    <span className={`font-bold font-mono ${color}`}>{value}</span>
+                    <span className={`font-bold font-mono ${color}`}>{value.toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -418,7 +729,6 @@ export default function ReportsPage() {
               </h4>
               <MiniBarChart data={summary.dailyRegistrations} />
             </div>
-
           </div>
         )}
 
@@ -432,8 +742,10 @@ export default function ReportsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {summary.categoryBreakdown.map(({ code, nameEn, count }) => (
                 <div key={code} className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                  <div className="text-lg font-bold text-slate-900">{count}</div>
-                  <div className="text-xs text-slate-600 font-medium leading-tight mt-0.5">{nameEn}</div>
+                  <div className="text-lg font-bold text-slate-900">{count.toLocaleString()}</div>
+                  <div className="text-xs text-slate-600 font-medium leading-tight mt-0.5">
+                    {nameEn}
+                  </div>
                   <div className="text-[10px] text-slate-400 font-mono">{code}</div>
                 </div>
               ))}
@@ -441,40 +753,42 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* ── Filters ── */}
+        {/* ── Filters Bar ── */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap gap-3 items-end">
           <div className="flex items-center gap-1 text-xs font-bold text-slate-600 mr-1">
             <Filter className="w-3.5 h-3.5" /> Filters
           </div>
 
-          {/* Search */}
-          <div className="relative flex-1 min-w-[180px]">
+          {/* Search Input (Debounced Server-Side Search) */}
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search name, mobile, reg no…"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Search name, mobile, reg no across all records…"
+              value={searchInput}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="pl-8 pr-3 py-2 w-full rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
             />
           </div>
 
-          {/* Category */}
+          {/* Category Filter */}
           <select
             value={filters.categoryCode ?? 'ALL'}
-            onChange={(e) => setFilters((p) => ({ ...p, categoryCode: e.target.value }))}
+            onChange={(e) => applyFilter((p) => ({ ...p, categoryCode: e.target.value }))}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           >
             <option value="ALL">All Categories</option>
             {categories.map((c) => (
-              <option key={c.code} value={c.code}>{c.nameEn}</option>
+              <option key={c.code} value={c.code}>
+                {c.nameEn}
+              </option>
             ))}
           </select>
 
-          {/* Status */}
+          {/* Status Filter */}
           <select
             value={filters.status ?? 'ALL'}
-            onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
+            onChange={(e) => applyFilter((p) => ({ ...p, status: e.target.value }))}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           >
             <option value="ALL">All Statuses</option>
@@ -485,10 +799,10 @@ export default function ReportsPage() {
             <option value="DRAFT">Draft</option>
           </select>
 
-          {/* Gender */}
+          {/* Gender Filter */}
           <select
             value={filters.gender ?? 'ALL'}
-            onChange={(e) => setFilters((p) => ({ ...p, gender: e.target.value }))}
+            onChange={(e) => applyFilter((p) => ({ ...p, gender: e.target.value }))}
             className="px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           >
             <option value="ALL">All Genders</option>
@@ -502,23 +816,31 @@ export default function ReportsPage() {
             <input
               type="date"
               value={filters.dateFrom ?? ''}
-              onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))}
+              onChange={(e) => applyFilter((p) => ({ ...p, dateFrom: e.target.value }))}
               className="px-2 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
             />
             <span className="text-slate-400 text-xs">to</span>
             <input
               type="date"
               value={filters.dateTo ?? ''}
-              onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))}
+              onChange={(e) => applyFilter((p) => ({ ...p, dateTo: e.target.value }))}
               className="px-2 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
             />
           </div>
 
-          {/* Clear */}
+          {/* Clear Filters */}
           <button
             onClick={() => {
-              setFilters({ categoryCode: 'ALL', status: 'ALL', gender: 'ALL', dateFrom: '', dateTo: '' });
-              setSearchText('');
+              setSearchInput('');
+              setDebouncedSearch('');
+              setPage(1);
+              setFilters({
+                categoryCode: 'ALL',
+                status: 'ALL',
+                gender: 'ALL',
+                dateFrom: '',
+                dateTo: '',
+              });
             }}
             className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-500 text-xs hover:bg-slate-50 transition flex items-center gap-1"
           >
@@ -528,6 +850,7 @@ export default function ReportsPage() {
 
         {/* ── Data Table ── */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Table Header Bar */}
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-blue-600" />
@@ -540,11 +863,12 @@ export default function ReportsPage() {
                 </span>
               )}
               <span className="text-xs px-3 py-1 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200">
-                {visibleRows.length} {visibleRows.length === 1 ? 'record' : 'records'}
+                {rows.length} on page · {totalCount.toLocaleString()} total matches
               </span>
             </div>
           </div>
 
+          {/* Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-600 uppercase font-semibold border-b border-slate-200">
@@ -572,7 +896,7 @@ export default function ReportsPage() {
                   <th className="py-3 px-4">Verification</th>
                   <th className="py-3 px-4">Card Status</th>
                   <th
-                    className="py-3 px-4 cursor-pointer hover:text-blue-600 select-none"
+                    className="py-3 px-4 cursor-pointer hover:text-blue-600 select-none text-center"
                     onClick={() => handleSort('printCount')}
                   >
                     Prints <SortIcon k="printCount" />
@@ -587,7 +911,7 @@ export default function ReportsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  Array.from({ length: 6 }).map((_, i) => (
+                  Array.from({ length: pageSize > 25 ? 8 : 5 }).map((_, i) => (
                     <tr key={i}>
                       {Array.from({ length: 9 }).map((_, j) => (
                         <td key={j} className="py-3 px-4">
@@ -596,7 +920,7 @@ export default function ReportsPage() {
                       ))}
                     </tr>
                   ))
-                ) : visibleRows.length === 0 ? (
+                ) : rows.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="py-12 text-center text-slate-400 text-sm">
                       <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-slate-300" />
@@ -604,7 +928,7 @@ export default function ReportsPage() {
                     </td>
                   </tr>
                 ) : (
-                  visibleRows.map((row) => (
+                  rows.map((row) => (
                     <tr key={row.registrationNumber} className="hover:bg-slate-50/75 transition">
                       <td className="py-3 px-4 font-mono font-bold text-blue-600 whitespace-nowrap">
                         {row.registrationNumber}
@@ -620,17 +944,23 @@ export default function ReportsPage() {
                       <td className="py-3 px-4 font-mono text-slate-600">{row.mobile}</td>
                       <td className="py-3 px-4 text-slate-600">{row.areaZone ?? '—'}</td>
                       <td className="py-3 px-4">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${statusBadge(row.verificationStatus)}`}>
-                          {row.verificationStatus.replace('_', ' ')}
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded ${statusBadge(row.verificationStatus)}`}
+                        >
+                          {row.verificationStatus.replace(/_/g, ' ')}
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${cardStatusBadge(row.cardStatus)}`}>
-                          {row.cardStatus ? row.cardStatus.replace('_', ' ') : 'NO CARD'}
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded ${cardStatusBadge(row.cardStatus)}`}
+                        >
+                          {row.cardStatus ? row.cardStatus.replace(/_/g, ' ') : 'NO CARD'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <span className="font-mono font-bold text-slate-800">{row.printCount}</span>
+                        <span className="font-mono font-bold text-slate-800">
+                          {row.printCount}
+                        </span>
                         {row.reprintCount > 0 && (
                           <span className="ml-1 text-[9px] text-orange-600 font-bold">
                             +{row.reprintCount}R
@@ -647,24 +977,17 @@ export default function ReportsPage() {
             </table>
           </div>
 
-          {/* Table Footer */}
-          {!loading && visibleRows.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 text-xs text-slate-500 flex items-center justify-between">
-              <span>
-                Showing <strong>{visibleRows.length}</strong> records
-                {rows.length !== visibleRows.length && ` (filtered from ${rows.length})`}
-              </span>
-              <button
-                onClick={handleExportCsv}
-                className="flex items-center gap-1.5 text-teal-600 font-semibold hover:text-teal-700 transition"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Export {visibleRows.length} rows as CSV
-              </button>
-            </div>
-          )}
+          {/* ── Pagination Bar ── */}
+          <PaginationBar
+            page={page}
+            totalPages={totalPages}
+            totalCount={totalCount}
+            pageSize={pageSize}
+            loading={loading}
+            onPage={setPage}
+            onPageSize={applyPageSize}
+          />
         </div>
-
       </main>
     </div>
   );

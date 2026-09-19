@@ -223,19 +223,7 @@ export async function printCardDirectly(
     });
   }
 
-  // 2. Try silent print via server API route (no browser dialog)
-  if (printerName) {
-    const silentResult = await silentPrintCards([dataUrl], printerName);
-    if (silentResult.success) {
-      console.info(`[CR80Print] Silent print succeeded for 1 card on ${printerName}`);
-      return { usedSilent: true };
-    }
-    console.warn(
-      `[CR80Print] Silent print failed (${silentResult.error}), falling back to dialog...`
-    );
-  }
-
-  // 3. Fallback: iframe print (shows system dialog)
+  // 2. Open system print dialog via isolated iframe
   const existingIframe = document.getElementById('cr80-isolated-print-frame');
   if (existingIframe) {
     try { existingIframe.remove(); } catch (_) {}

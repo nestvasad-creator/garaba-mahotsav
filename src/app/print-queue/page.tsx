@@ -135,7 +135,7 @@ export default function PrintQueuePage() {
   }, []);
 
   // Printer Selector State (Zebra ZC300 Card Printer defaulted as primary connected hardware)
-  const [selectedPrinter, setSelectedPrinter] = useState<string>('ZEBRA-ZC300-USB01');
+  const [selectedPrinter, setSelectedPrinter] = useState<string>('Zebra ZC300 USB Card Printer');
   const [customPrinterName, setCustomPrinterName] = useState<string>('');
 
   const activePrinterIdentifier =
@@ -167,17 +167,14 @@ export default function PrintQueuePage() {
   const handleDirectPrintRow = async (job: PrintQueueItem) => {
     setActionInProgressId(job.cardId);
     setDirectPrintingJob(job);
-    setFeedbackMessage({ text: `Connecting to printer ${activePrinterIdentifier}...` });
+    setFeedbackMessage({ text: `Opening print dialog for ${job.cardNumber}...` });
 
     // Allow DOM 250ms to mount the staging card element
     setTimeout(async () => {
       const el = document.getElementById('cr80-staging-card');
       if (el) {
         try {
-          const result = await printCardDirectly(el, activePrinterIdentifier);
-          if (result.usedSilent) {
-            setFeedbackMessage({ text: `Card sent silently to ${activePrinterIdentifier} — no dialog needed.` });
-          }
+          await printCardDirectly(el);
         } catch (e: any) {
           console.warn('Physical print error:', e);
         }
@@ -185,7 +182,7 @@ export default function PrintQueuePage() {
 
       setActionInProgressId(null);
       setDirectPrintingJob(null);
-      // Do NOT immediately mark as PRINTED. Prompt operator to verify physical output!
+      // Prompt operator to verify physical output after dialog closes
       setPendingConfirmJob(job);
     }, 250);
   };
@@ -598,7 +595,7 @@ export default function PrintQueuePage() {
                 onChange={(e) => setSelectedPrinter(e.target.value)}
                 className="text-xs font-semibold bg-purple-50/70 border border-purple-300 rounded-xl px-3 py-1.5 text-purple-950 focus:bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none cursor-pointer shadow-xs"
               >
-                <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01) — Connected / Default</option>
+                <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer — Connected / Default</option>
                 <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
                 <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
                 <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>
@@ -858,7 +855,7 @@ export default function PrintQueuePage() {
                   onChange={(e) => setSelectedPrinter(e.target.value)}
                   className="text-xs font-semibold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:ring-2 focus:ring-purple-500 focus:outline-none"
                 >
-                  <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01) — Connected / Default</option>
+                  <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer — Connected / Default</option>
                   <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
                   <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
                   <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>

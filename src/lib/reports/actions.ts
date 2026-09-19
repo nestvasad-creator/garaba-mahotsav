@@ -49,6 +49,23 @@ export interface ReportFilters {
   gender?: string;
   dateFrom?: string;
   dateTo?: string;
+  search?: string;
+}
+
+export type ReportSortKey =
+  | 'registrationNumber'
+  | 'holderNameEn'
+  | 'categoryEn'
+  | 'createdAt'
+  | 'printCount';
+
+export interface ReportRowsResult {
+  rows: ReportRow[];
+  /** Total number of records matching the active filters in Postgres. */
+  totalCount: number;
+  /** Total pages calculated from totalCount and pageSize. */
+  totalPages: number;
+  error?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -57,20 +74,218 @@ function requireAuth() {
   return getCurrentUserSession();
 }
 
-// ─── getReportRows ────────────────────────────────────────────────────────────
+// ─── getReportRows (Paginated with Server-Side Search & Sorting) ───────────────
 
+/**
+ * Fetches a server-paginated page of registrations joined with id_cards.
+ * Supports server-side keyword search (ILIKE), server-side category filtering,
+ * status/gender/date filters, and server-side ordering.
+ */
 export async function getReportRows(
   filters: ReportFilters = {},
+  page: number = 1,
+  pageSize: number = 50,
+  sortKey: ReportSortKey = 'createdAt',
+  sortAsc: boolean = false,
   eventId: string = DEFAULT_EVENT_ID
-): Promise<{ rows: ReportRow[]; error?: string }> {
+): Promise<ReportRowsResult> {
   const session = await requireAuth();
   if (!session || !canPerformAction(session.roleCode, 'VIEW_REPORTS')) {
-    return { rows: [], error: 'Unauthorized' };
+    return { rows: [], totalCount: 0, totalPages: 0, error: 'Unauthorized' };
   }
 
   const supabase = createAdminClient();
 
-  // Step 1: Fetch registrations with card_type join using explicit FK hint
+  // 1. Resolve Category ID for server-side index-accelerated filtering if specified
+  let targetCategoryId: string | null = null;
+  if (filters.categoryCode && filters.categoryCode !== 'ALL') {
+    const { data: catRecord } = await supabase
+      .from('card_types')
+      .select('id')
+      .eq('event_id', eventId)
+      .eq('code', filters.categoryCode)
+      .maybeSingle();
+
+    if (catRecord) {
+      targetCategoryId = catRecord.id;
+    }
+  }
+
+  // 2. Base query on registrations with count: 'exact'
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let regQuery = supabase
+    .from('registrations')
+    .select(
+      `
+      id,
+      registration_number,
+      full_name_en,
+      full_name_gu,
+      gender,
+      mobile,
+      area_zone,
+      city,
+      status,
+      created_at,
+      verified_at,
+      category_id,
+      card_types!category_id ( code, name_en )
+    `,
+      { count: 'exact' }
+    )
+    .eq('event_id', eventId);
+
+  // Server-side category filter via foreign key
+  if (targetCategoryId) {
+    regQuery = regQuery.eq('category_id', targetCategoryId);
+  }
+
+  // Server-side status filter
+  if (filters.status && filters.status !== 'ALL') {
+    regQuery = regQuery.eq('status', filters.status);
+  }
+
+  // Server-side gender filter
+  if (filters.gender && filters.gender !== 'ALL') {
+    regQuery = regQuery.eq('gender', filters.gender);
+  }
+
+  // Server-side date range filters
+  if (filters.dateFrom) {
+    regQuery = regQuery.gte('created_at', filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    const toDate = new Date(filters.dateTo);
+    toDate.setDate(toDate.getDate() + 1);
+    regQuery = regQuery.lt('created_at', toDate.toISOString().split('T')[0]);
+  }
+
+  // Server-side keyword search across name, gujarati name, mobile, and reg number
+  if (filters.search && filters.search.trim()) {
+    const s = filters.search.trim();
+    regQuery = regQuery.or(
+      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%`
+    );
+  }
+
+  // Server-side sorting
+  const sortMap: Record<string, string> = {
+    registrationNumber: 'registration_number',
+    holderNameEn: 'full_name_en',
+    createdAt: 'created_at',
+  };
+
+  const dbSortCol = sortMap[sortKey];
+  if (dbSortCol) {
+    regQuery = regQuery.order(dbSortCol, { ascending: sortAsc });
+  } else {
+    regQuery = regQuery.order('created_at', { ascending: false });
+  }
+
+  // Apply server-side pagination LIMIT & OFFSET
+  regQuery = regQuery.range(from, to);
+
+  const { data: regs, count: totalCount, error: regError } = await regQuery;
+
+  if (regError) {
+    console.error('[Reports] registrations fetch error:', regError);
+    return { rows: [], totalCount: 0, totalPages: 0, error: regError.message };
+  }
+
+  if (!regs || regs.length === 0) {
+    return { rows: [], totalCount: totalCount ?? 0, totalPages: 0 };
+  }
+
+  // 3. Fetch id_cards for only this slice's registrations
+  const regIds = regs.map((r: any) => r.id);
+  const { data: cards, error: cardError } = await supabase
+    .from('id_cards')
+    .select('registration_id, card_number, status, metadata')
+    .in('registration_id', regIds)
+    .eq('event_id', eventId);
+
+  if (cardError) {
+    console.error('[Reports] id_cards fetch error:', cardError);
+  }
+
+  const cardMap = new Map<string, any>();
+  for (const c of cards ?? []) {
+    if (!cardMap.has(c.registration_id)) {
+      cardMap.set(c.registration_id, c);
+    }
+  }
+
+  // 4. Map DB records to ReportRow
+  let rows: ReportRow[] = regs.map((r: any) => {
+    const card = cardMap.get(r.id) ?? null;
+    const ct = r.card_types as any;
+    const meta = card?.metadata ?? {};
+    return {
+      registrationNumber: r.registration_number,
+      cardNumber: card?.card_number ?? null,
+      holderNameEn: r.full_name_en,
+      holderNameGu: r.full_name_gu,
+      categoryEn: ct?.name_en ?? '',
+      categoryCode: ct?.code ?? '',
+      gender: r.gender,
+      mobile: r.mobile,
+      areaZone: r.area_zone,
+      city: r.city,
+      verificationStatus: r.status,
+      cardStatus: card?.status ?? null,
+      printCount: Number(meta.print_count ?? 0),
+      reprintCount: Number(meta.reprint_count ?? 0),
+      createdAt: r.created_at,
+      verifiedAt: r.verified_at,
+    };
+  });
+
+  // Client-side sort fallback for join-specific columns (categoryEn, printCount)
+  if (sortKey === 'categoryEn') {
+    rows.sort((a, b) => (sortAsc ? a.categoryEn.localeCompare(b.categoryEn) : b.categoryEn.localeCompare(a.categoryEn)));
+  } else if (sortKey === 'printCount') {
+    rows.sort((a, b) => (sortAsc ? a.printCount - b.printCount : b.printCount - a.printCount));
+  }
+
+  const serverTotal = totalCount ?? 0;
+  const totalPages = Math.ceil(serverTotal / pageSize);
+
+  return { rows, totalCount: serverTotal, totalPages };
+}
+
+// ─── exportAllReportRows (Bulk Export of All Matching Filtered Rows) ──────────
+
+/**
+ * Fetches all records matching active filters without small pagination.
+ * Used exclusively when exporting the entire dataset to CSV.
+ */
+export async function exportAllReportRows(
+  filters: ReportFilters = {},
+  eventId: string = DEFAULT_EVENT_ID
+): Promise<{ rows: ReportRow[]; totalCount: number; error?: string }> {
+  const session = await requireAuth();
+  if (!session || !canPerformAction(session.roleCode, 'VIEW_REPORTS')) {
+    return { rows: [], totalCount: 0, error: 'Unauthorized' };
+  }
+
+  const supabase = createAdminClient();
+
+  let targetCategoryId: string | null = null;
+  if (filters.categoryCode && filters.categoryCode !== 'ALL') {
+    const { data: catRecord } = await supabase
+      .from('card_types')
+      .select('id')
+      .eq('event_id', eventId)
+      .eq('code', filters.categoryCode)
+      .maybeSingle();
+
+    if (catRecord) {
+      targetCategoryId = catRecord.id;
+    }
+  }
+
   let regQuery = supabase
     .from('registrations')
     .select(`
@@ -89,8 +304,12 @@ export async function getReportRows(
       card_types!category_id ( code, name_en )
     `)
     .eq('event_id', eventId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(10000); // Safety boundary to prevent catastrophic memory spikes
 
+  if (targetCategoryId) {
+    regQuery = regQuery.eq('category_id', targetCategoryId);
+  }
   if (filters.status && filters.status !== 'ALL') {
     regQuery = regQuery.eq('status', filters.status);
   }
@@ -105,77 +324,78 @@ export async function getReportRows(
     toDate.setDate(toDate.getDate() + 1);
     regQuery = regQuery.lt('created_at', toDate.toISOString().split('T')[0]);
   }
+  if (filters.search && filters.search.trim()) {
+    const s = filters.search.trim();
+    regQuery = regQuery.or(
+      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%`
+    );
+  }
 
   const { data: regs, error: regError } = await regQuery;
 
   if (regError) {
-    console.error('[Reports] registrations fetch error:', regError);
-    return { rows: [], error: regError.message };
+    console.error('[Reports] export registrations fetch error:', regError);
+    return { rows: [], totalCount: 0, error: regError.message };
   }
 
   if (!regs || regs.length === 0) {
-    return { rows: [] };
+    return { rows: [], totalCount: 0 };
   }
 
-  // Step 2: Fetch id_cards for these registrations using registration_id FK
-  // Note: print_count and reprint_count live inside metadata JSONB, not as direct columns
+  // Fetch all associated id_cards in chunks of 500
   const regIds = regs.map((r: any) => r.id);
-  const { data: cards, error: cardError } = await supabase
-    .from('id_cards')
-    .select('registration_id, card_number, status, metadata')
-    .in('registration_id', regIds)
-    .eq('event_id', eventId);
-
-  if (cardError) {
-    console.error('[Reports] id_cards fetch error:', cardError);
-    // Don't fail — just proceed without card data
-  }
-
-  // Build a map: registration_id → card
   const cardMap = new Map<string, any>();
-  for (const c of cards ?? []) {
-    if (!cardMap.has(c.registration_id)) {
-      cardMap.set(c.registration_id, c);
+  const chunkSize = 500;
+
+  for (let i = 0; i < regIds.length; i += chunkSize) {
+    const chunk = regIds.slice(i, i + chunkSize);
+    const { data: cards } = await supabase
+      .from('id_cards')
+      .select('registration_id, card_number, status, metadata')
+      .in('registration_id', chunk)
+      .eq('event_id', eventId);
+
+    for (const c of cards ?? []) {
+      if (!cardMap.has(c.registration_id)) {
+        cardMap.set(c.registration_id, c);
+      }
     }
   }
 
-  // Step 3: Map and filter
-  const rows: ReportRow[] = regs
-    .map((r: any) => {
-      const card = cardMap.get(r.id) ?? null;
-      const ct = r.card_types as any;
-      const meta = card?.metadata ?? {};
-      return {
-        registrationNumber: r.registration_number,
-        cardNumber: card?.card_number ?? null,
-        holderNameEn: r.full_name_en,
-        holderNameGu: r.full_name_gu,
-        categoryEn: ct?.name_en ?? '',
-        categoryCode: ct?.code ?? '',
-        gender: r.gender,
-        mobile: r.mobile,
-        areaZone: r.area_zone,
-        city: r.city,
-        verificationStatus: r.status,
-        cardStatus: card?.status ?? null,
-        printCount: Number(meta.print_count ?? 0),
-        reprintCount: Number(meta.reprint_count ?? 0),
-        createdAt: r.created_at,
-        verifiedAt: r.verified_at,
-      };
-    })
-    .filter((row) => {
-      if (filters.categoryCode && filters.categoryCode !== 'ALL') {
-        return row.categoryCode === filters.categoryCode;
-      }
-      return true;
-    });
+  const rows: ReportRow[] = regs.map((r: any) => {
+    const card = cardMap.get(r.id) ?? null;
+    const ct = r.card_types as any;
+    const meta = card?.metadata ?? {};
+    return {
+      registrationNumber: r.registration_number,
+      cardNumber: card?.card_number ?? null,
+      holderNameEn: r.full_name_en,
+      holderNameGu: r.full_name_gu,
+      categoryEn: ct?.name_en ?? '',
+      categoryCode: ct?.code ?? '',
+      gender: r.gender,
+      mobile: r.mobile,
+      areaZone: r.area_zone,
+      city: r.city,
+      verificationStatus: r.status,
+      cardStatus: card?.status ?? null,
+      printCount: Number(meta.print_count ?? 0),
+      reprintCount: Number(meta.reprint_count ?? 0),
+      createdAt: r.created_at,
+      verifiedAt: r.verified_at,
+    };
+  });
 
-  return { rows };
+  return { rows, totalCount: rows.length };
 }
 
-// ─── getReportSummary ─────────────────────────────────────────────────────────
+// ─── getReportSummary (PostgreSQL RPC with Graceful Fallback) ──────────────────
 
+/**
+ * Fetches aggregate statistics for the KPI cards and chart breakdowns.
+ * Uses get_event_report_summary stored procedure when available in Postgres,
+ * with automatic fallback to optimized batch queries.
+ */
 export async function getReportSummary(
   eventId: string = DEFAULT_EVENT_ID
 ): Promise<{ summary: ReportSummary | null; error?: string }> {
@@ -186,30 +406,39 @@ export async function getReportSummary(
 
   const supabase = createAdminClient();
 
-  // 1. All registrations with category info
-  const { data: regs, error: regErr } = await supabase
-    .from('registrations')
-    .select('id, status, gender, created_at, card_types!category_id(code, name_en)')
-    .eq('event_id', eventId);
+  // 1. Try ultra-fast PostgreSQL Stored Procedure / RPC first
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_event_report_summary', {
+      p_event_id: eventId,
+    });
 
-  if (regErr) return { summary: null, error: regErr.message };
+    if (!rpcError && rpcData && typeof rpcData === 'object') {
+      return { summary: rpcData as ReportSummary };
+    }
+  } catch (_e) {
+    // Stored procedure not installed or errored — proceed to seamless fallback
+  }
 
-  // 2. All id_cards for this event
-  // Note: print_count / reprint_count are stored inside metadata JSONB
-  const { data: cards, error: cardErr } = await supabase
-    .from('id_cards')
-    .select('status, metadata, card_types!card_type_id(is_registered)')
-    .eq('event_id', eventId);
+  // 2. Fallback: Optimized direct batch queries
+  const [regsRes, cardsRes] = await Promise.all([
+    supabase
+      .from('registrations')
+      .select('id, status, gender, created_at, card_types!category_id(code, name_en)')
+      .eq('event_id', eventId),
+    supabase
+      .from('id_cards')
+      .select('status, metadata, card_types!card_type_id(is_registered)')
+      .eq('event_id', eventId),
+  ]);
 
-  if (cardErr) return { summary: null, error: cardErr.message };
+  if (regsRes.error) return { summary: null, error: regsRes.error.message };
+  if (cardsRes.error) return { summary: null, error: cardsRes.error.message };
 
-  const allRegs = regs ?? [];
-  const allCards = cards ?? [];
+  const allRegs = regsRes.data ?? [];
+  const allCards = cardsRes.data ?? [];
 
-  // Aggregate registration counts
   const statusCount = (s: string) => allRegs.filter((r: any) => r.status === s).length;
 
-  // Gender breakdown
   const gender = { MALE: 0, FEMALE: 0, OTHER: 0 };
   for (const r of allRegs) {
     const g = (r as any).gender as string;
@@ -218,7 +447,6 @@ export async function getReportSummary(
     else gender.OTHER++;
   }
 
-  // Category breakdown
   const catMap = new Map<string, { code: string; nameEn: string; count: number }>();
   for (const r of allRegs) {
     const ct = (r as any).card_types as any;
@@ -229,9 +457,8 @@ export async function getReportSummary(
     catMap.get(ct.code)!.count++;
   }
 
-  // Daily registrations (last 30 days)
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 30);
+  cutoff.setDate(cutoff.getDate() - 14);
   const dailyMap = new Map<string, number>();
   for (const r of allRegs) {
     const d = new Date((r as any).created_at);
@@ -244,7 +471,6 @@ export async function getReportSummary(
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // Card stats — read counts from metadata JSONB
   const cardsPrinted = allCards.filter((c: any) => c.status === 'PRINTED').length;
   const cardsQueued = allCards.filter((c: any) => c.status === 'PRINT_QUEUED').length;
   const totalReprintCount = allCards.reduce(
