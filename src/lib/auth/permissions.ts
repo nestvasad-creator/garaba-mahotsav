@@ -163,6 +163,7 @@ export function canPerformAction(
     | 'GENERATE_SPECIAL_CARD'
     | 'MANAGE_USERS'
     | 'SCAN_QR'
+    | 'VIEW_REPORTS'
 ): boolean {
   if (!roleCode) return false;
 
@@ -215,6 +216,8 @@ export function canPerformAction(
         'DATA_ENTRY_OPERATOR',
         'PRINTER_OPERATOR',
       ].includes(roleCode);
+    case 'VIEW_REPORTS':
+      return ['VERIFIER', 'EVENT_ADMIN', 'SUPER_ADMIN'].includes(roleCode);
     default:
       return false;
   }
