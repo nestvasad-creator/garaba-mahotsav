@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --border: #e2e8f0;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Gujarati Font Class */
+.font-gujarati {
+  font-family: var(--font-noto-gujarati), sans-serif;
+}
+
+/* Universal Print Styling for accurate color fidelity and background printing */
+* {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* When printing standard pages/reports, hide UI action buttons and navigation bars */
+  header,
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  /* CR80 Card Print Format for direct card printing */
+  .cr80-card-sheet {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+
