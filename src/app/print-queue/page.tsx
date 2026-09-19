@@ -15,6 +15,7 @@ import {
   Download,
   X,
   UserCheck,
+  RotateCcw,
 } from 'lucide-react';
 import { RoleAccessGate } from '@/components/auth/RoleAccessGate';
 import { getCurrentUserSession } from '@/lib/auth/actions';
@@ -23,6 +24,7 @@ import {
   dispatchPrint,
   batchDispatchPrint,
   requestCardReprint,
+  revertCardToQueue,
   PrintQueueItem,
 } from '@/lib/cards/actions';
 import { CR80Card, CardRenderData } from '@/components/card-renderer/CR80Card';
@@ -55,8 +57,9 @@ interface BatchPrintProgressState {
   failedItems: BatchPrintFailedItem[];
   isComplete: boolean;
   activeCard?: PrintQueueItem | null;
-  stage?: 'verifying' | 'rendering' | 'dispatching' | 'printing' | 'complete';
+  stage?: 'verifying' | 'rendering' | 'dialog' | 'confirming' | 'complete';
   statusText?: string;
+  capturedCardIds?: string[];
 }
 
 export default function PrintQueuePage() {
@@ -85,8 +88,11 @@ export default function PrintQueuePage() {
     null
   );
   const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
+  const [pendingConfirmJob, setPendingConfirmJob] = useState<PrintQueueItem | null>(null);
+  const [confirmingPrint, setConfirmingPrint] = useState(false);
   const [batchPrinting, setBatchPrinting] = useState(false);
-  const [batchStagingCard, setBatchStagingCard] = useState<PrintQueueItem | null>(null);
+  const [batchStagingCards, setBatchStagingCards] = useState<PrintQueueItem[]>([]);
   const [batchProgress, setBatchProgress] = useState<BatchPrintProgressState>({
     isOpen: false,
     isProcessing: false,
@@ -102,6 +108,7 @@ export default function PrintQueuePage() {
     activeCard: null,
     stage: 'verifying',
     statusText: '',
+    capturedCardIds: [],
   });
   const abortBatchRef = React.useRef(false);
 
@@ -173,34 +180,54 @@ export default function PrintQueuePage() {
         }
       }
 
-      try {
-        const res = await dispatchPrint(job.cardId, activePrinterIdentifier);
-        if (res.success) {
-          setFeedbackMessage({ text: `Card ${job.cardNumber} dispatched to ${activePrinterIdentifier}!` });
-          await fetchQueue();
-          setTimeout(() => setFeedbackMessage(null), 4000);
-        } else {
-          setFeedbackMessage({ text: res.error || 'Failed to record print job.', error: true });
-        }
-      } catch (err: any) {
-        setFeedbackMessage({ text: err.message, error: true });
-      } finally {
-        setActionInProgressId(null);
-        setDirectPrintingJob(null);
-      }
+      setActionInProgressId(null);
+      setDirectPrintingJob(null);
+      // Do NOT immediately mark as PRINTED. Prompt operator to verify physical output!
+      setPendingConfirmJob(job);
     }, 250);
   };
 
+  const handleRevertToQueue = async (cardId: string) => {
+    setActionInProgressId(cardId);
+    setFeedbackMessage(null);
+    try {
+      const res = await revertCardToQueue(cardId);
+      if (res.success) {
+        setFeedbackMessage({ text: res.message || 'Card returned to print queue.' });
+        await fetchQueue();
+        setTimeout(() => setFeedbackMessage(null), 4000);
+      } else {
+        setFeedbackMessage({ text: res.error || 'Failed to revert card.', error: true });
+      }
+    } catch (err: any) {
+      setFeedbackMessage({ text: err.message, error: true });
+    } finally {
+      setActionInProgressId(null);
+    }
+  };
+
   const handleBatchPrint = async (cardsOverride?: PrintQueueItem[]) => {
-    const targetCards = cardsOverride || queue.filter((j) => j.status === 'QUEUED');
+    let targetCards: PrintQueueItem[] = [];
+
+    if (cardsOverride && cardsOverride.length > 0) {
+      targetCards = cardsOverride;
+    } else if (selectedCardIds.size > 0) {
+      targetCards = queue.filter((j) => selectedCardIds.has(j.cardId));
+    } else {
+      targetCards = queue.filter((j) => j.status === 'QUEUED');
+    }
+
     if (targetCards.length === 0) {
-      setFeedbackMessage({ text: 'No cards currently in QUEUED status to print.', error: true });
+      setFeedbackMessage({ text: 'No cards selected or in QUEUED status to print.', error: true });
       return;
     }
 
     abortBatchRef.current = false;
     setBatchPrinting(true);
     setFeedbackMessage(null);
+
+    // 1. Mount ALL target cards in parallel to prevent unmount/remount race conditions
+    setBatchStagingCards(targetCards);
 
     setBatchProgress({
       isOpen: true,
@@ -216,12 +243,17 @@ export default function PrintQueuePage() {
       isComplete: false,
       activeCard: targetCards[0],
       stage: 'verifying',
-      statusText: `Preparing batch for printer ${activePrinterIdentifier}...`,
+      statusText: `Staging ${targetCards.length} cards for printer ${activePrinterIdentifier}...`,
+      capturedCardIds: [],
     });
+
+    // Give React DOM 220ms to mount all cards and start QR/photo loads
+    await new Promise((resolve) => setTimeout(resolve, 220));
 
     let succeeded = 0;
     const failed: BatchPrintFailedItem[] = [];
     const capturedUrls: string[] = [];
+    const capturedCardIds: string[] = [];
 
     for (let i = 0; i < targetCards.length; i++) {
       if (abortBatchRef.current) {
@@ -231,8 +263,6 @@ export default function PrintQueuePage() {
       const card = targetCards[i];
       const progressPercent = Math.round((i / targetCards.length) * 100);
 
-      // Mount card into live staging element and modal preview
-      setBatchStagingCard(card);
       setBatchProgress((prev) => ({
         ...prev,
         current: i + 1,
@@ -241,14 +271,11 @@ export default function PrintQueuePage() {
         percent: progressPercent,
         activeCard: card,
         stage: 'verifying',
-        statusText: `Verifying Photo & QR code for card ${card.cardNumber}...`,
+        statusText: `Verifying Photo & QR code for card ${i + 1} of ${targetCards.length} (${card.cardNumber})...`,
       }));
 
-      // Give React a moment to mount the staging card in the DOM
-      await new Promise((resolve) => setTimeout(resolve, 140));
-
       try {
-        const stagingEl = document.getElementById('cr80-batch-staging-card');
+        const stagingEl = document.getElementById(`cr80-batch-staging-${card.cardId}`);
         if (!stagingEl) {
           throw new Error('Batch card staging element was not found in DOM');
         }
@@ -260,40 +287,19 @@ export default function PrintQueuePage() {
         setBatchProgress((prev) => ({
           ...prev,
           stage: 'rendering',
-          statusText: `Rendering 300 DPI CR80 layout for ${card.cardNumber}...`,
+          statusText: `Rendering 300 DPI layout for ${card.cardNumber}...`,
         }));
 
         const dataUrl = await renderCardToDataUrl(stagingEl);
         capturedUrls.push(dataUrl);
+        capturedCardIds.push(card.cardId);
+        succeeded++;
 
-        // 3. Record print job dispatch in Supabase
         setBatchProgress((prev) => ({
           ...prev,
-          stage: 'dispatching',
-          statusText: `Recording print dispatch for ${card.cardNumber}...`,
+          succeededCount: succeeded,
+          percent: Math.round(((i + 1) / targetCards.length) * 100),
         }));
-
-        const res = await dispatchPrint(card.cardId, activePrinterIdentifier);
-        if (res.success) {
-          succeeded++;
-          setBatchProgress((prev) => ({
-            ...prev,
-            succeededCount: succeeded,
-            percent: Math.round(((i + 1) / targetCards.length) * 100),
-          }));
-        } else {
-          failed.push({
-            cardId: card.cardId,
-            cardNumber: card.cardNumber,
-            holderName: card.holderNameEn,
-            error: res.error || 'Print dispatch rejected by server',
-          });
-          setBatchProgress((prev) => ({
-            ...prev,
-            failedItems: [...failed],
-            percent: Math.round(((i + 1) / targetCards.length) * 100),
-          }));
-        }
       } catch (err: any) {
         failed.push({
           cardId: card.cardId,
@@ -308,19 +314,18 @@ export default function PrintQueuePage() {
         }));
       }
 
-      // Small pause for smooth visual progression
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await new Promise((resolve) => setTimeout(resolve, 60));
     }
 
-    // Clean up batch staging card
-    setBatchStagingCard(null);
+    // Clean up batch staging DOM
+    setBatchStagingCards([]);
 
-    // 4. Send all captured cards to the physical printer via multi-page CR80 job
+    // 3. Send all captured cards to the physical printer via multi-page CR80 job
     if (capturedUrls.length > 0 && !abortBatchRef.current) {
       setBatchProgress((prev) => ({
         ...prev,
-        stage: 'printing',
-        statusText: `Sending ${capturedUrls.length} cards to physical printer ${activePrinterIdentifier}...`,
+        stage: 'dialog',
+        statusText: `Opening print dialog for ${capturedUrls.length} cards on ${activePrinterIdentifier}...`,
       }));
 
       try {
@@ -330,33 +335,16 @@ export default function PrintQueuePage() {
       }
     }
 
-    await fetchQueue();
-
+    // 4. Move to CONFIRMATION stage (Do NOT automatically mark printed!)
     setBatchProgress((prev) => ({
       ...prev,
       isProcessing: false,
-      isComplete: true,
-      stage: 'complete',
-      statusText: `Batch complete: ${succeeded} ready for print, ${failed.length} errors.`,
+      stage: 'confirming',
+      statusText: `Print dialog opened for ${succeeded} cards. Please confirm if badges printed successfully.`,
       percent: 100,
+      capturedCardIds,
     }));
     setBatchPrinting(false);
-
-    if (failed.length === 0) {
-      setFeedbackMessage({
-        text: `Batch print completed! All ${succeeded} cards sent to physical printer ${activePrinterIdentifier}.`,
-      });
-    } else if (succeeded > 0) {
-      setFeedbackMessage({
-        text: `Batch print finished: ${succeeded} sent to printer, ${failed.length} failed. Check details in modal.`,
-        error: true,
-      });
-    } else {
-      setFeedbackMessage({
-        text: `Batch print failed for all ${failed.length} cards.`,
-        error: true,
-      });
-    }
   };
 
   const handleRetryFailedBatch = () => {
@@ -490,11 +478,15 @@ export default function PrintQueuePage() {
             </button>
             <button
               onClick={() => handleBatchPrint()}
-              disabled={batchPrinting || queuedCount === 0}
+              disabled={batchPrinting || (selectedCardIds.size === 0 && queuedCount === 0)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 shadow-sm transition disabled:opacity-50"
             >
               <Layers className="w-4 h-4" />
-              {batchPrinting ? 'Dispatching Batch...' : `Batch Print (${queuedCount} Queued)`}
+              {batchPrinting
+                ? 'Processing Batch...'
+                : selectedCardIds.size > 0
+                ? `Batch Print (${selectedCardIds.size} Selected)`
+                : `Batch Print (${queuedCount} Queued)`}
             </button>
           </div>
         </header>
@@ -625,6 +617,24 @@ export default function PrintQueuePage() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 uppercase font-semibold border-b border-slate-200">
                   <tr>
+                    <th className="py-3 px-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredQueue.length > 0 &&
+                          filteredQueue.every((j) => selectedCardIds.has(j.cardId))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedCardIds(new Set(filteredQueue.map((j) => j.cardId)));
+                          } else {
+                            setSelectedCardIds(new Set());
+                          }
+                        }}
+                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                        title="Select all badges in view"
+                      />
+                    </th>
                     <th className="py-3 px-4">Card Number</th>
                     <th className="py-3 px-4">Holder Details</th>
                     <th className="py-3 px-4">Category / Gender</th>
@@ -637,7 +647,7 @@ export default function PrintQueuePage() {
                 <tbody className="divide-y divide-slate-100">
                   {loadingQueue ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <td colSpan={8} className="py-12 text-center text-slate-400">
                         <div className="flex items-center justify-center gap-2">
                           <div className="w-4 h-4 rounded-full border-2 border-purple-600 border-t-transparent animate-spin" />
                           <span>Loading print queue from Supabase...</span>
@@ -646,13 +656,36 @@ export default function PrintQueuePage() {
                     </tr>
                   ) : filteredQueue.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <td colSpan={8} className="py-12 text-center text-slate-400">
                         No cards found in this filter status.
                       </td>
                     </tr>
                   ) : (
                     filteredQueue.map((job) => (
-                      <tr key={job.cardId} className="hover:bg-slate-50/75 transition">
+                      <tr
+                        key={job.cardId}
+                        className={`transition ${
+                          selectedCardIds.has(job.cardId)
+                            ? 'bg-purple-50/50 hover:bg-purple-50/80'
+                            : 'hover:bg-slate-50/75'
+                        }`}
+                      >
+                        <td className="py-3.5 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedCardIds.has(job.cardId)}
+                            onChange={(e) => {
+                              const next = new Set(selectedCardIds);
+                              if (e.target.checked) {
+                                next.add(job.cardId);
+                              } else {
+                                next.delete(job.cardId);
+                              }
+                              setSelectedCardIds(next);
+                            }}
+                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                          />
+                        </td>
                         <td className="py-3.5 px-4">
                           <span className="font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
                             {job.cardNumber}
@@ -669,7 +702,7 @@ export default function PrintQueuePage() {
                             <span
                               className={`text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase ${
                                 job.gender === 'FEMALE'
-                                  ? 'bg-pink-100 text-pink-700'
+                                   ? 'bg-pink-100 text-pink-700'
                                   : 'bg-blue-100 text-blue-700'
                               }`}
                             >
@@ -721,16 +754,27 @@ export default function PrintQueuePage() {
                               {actionInProgressId === job.cardId ? 'Printing...' : 'Print Card'}
                             </button>
                           ) : (
-                            <button
-                              onClick={() => {
-                                setSelectedReprintCard(job);
-                                setShowReprintModal(true);
-                              }}
-                              className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 font-semibold hover:bg-amber-100 transition inline-flex items-center gap-1"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              Request Reprint
-                            </button>
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleRevertToQueue(job.cardId)}
+                                disabled={actionInProgressId === job.cardId}
+                                className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 font-semibold transition text-xs inline-flex items-center gap-1 shadow-xs"
+                                title="Print cancelled or jammed? Revert back to QUEUED without formal reprint authorization"
+                              >
+                                <RotateCcw className="w-3 h-3 text-slate-500" />
+                                Revert
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedReprintCard(job);
+                                  setShowReprintModal(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 font-semibold hover:bg-amber-100 transition inline-flex items-center gap-1"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Request Reprint
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1201,18 +1245,70 @@ export default function PrintQueuePage() {
                 </div>
               </div>
 
-              {/* Footer Actions */}
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              {/* Footer Actions / Physical Confirmation Phase */}
+              <div className="pt-3 border-t border-slate-100">
                 {batchProgress.isProcessing ? (
-                  <button
-                    type="button"
-                    onClick={handleCancelBatch}
-                    className="px-4 py-2 rounded-xl border border-rose-300 text-xs font-bold text-rose-700 hover:bg-rose-50 transition"
-                  >
-                    Cancel / Stop Batch
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelBatch}
+                      className="px-4 py-2 rounded-xl border border-rose-300 text-xs font-bold text-rose-700 hover:bg-rose-50 transition"
+                    >
+                      Cancel / Stop Batch
+                    </button>
+                  </div>
+                ) : batchProgress.stage === 'confirming' ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
+                        <Printer className="w-4 h-4 text-amber-700" />
+                        Did all {batchProgress.succeededCount} cards feed and print on {batchProgress.printerIdentifier}?
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800">
+                      If you cancelled the print dialog or the feeder jammed, click <strong>"✕ Cancelled / Keep in Queue"</strong> so no cards are marked as printed.
+                    </p>
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleCloseBatchModal();
+                          setFeedbackMessage({ text: 'Batch print cancelled. All cards remain in QUEUED status.' });
+                        }}
+                        className="px-3.5 py-2 rounded-xl border border-amber-300 text-xs font-semibold text-amber-900 hover:bg-amber-100 transition"
+                      >
+                        ✕ Cancelled / Keep in Queue
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!batchProgress.capturedCardIds || batchProgress.capturedCardIds.length === 0) {
+                            handleCloseBatchModal();
+                            return;
+                          }
+                          const cardIds = batchProgress.capturedCardIds;
+                          setBatchProgress((prev) => ({
+                            ...prev,
+                            isProcessing: true,
+                            statusText: `Recording ${cardIds.length} cards as PRINTED in Supabase...`,
+                          }));
+                          const res = await batchDispatchPrint(cardIds, activePrinterIdentifier);
+                          await fetchQueue();
+                          setSelectedCardIds(new Set());
+                          handleCloseBatchModal();
+                          setFeedbackMessage({
+                            text: `Batch print confirmed! All ${res.count} cards marked as PRINTED on ${activePrinterIdentifier}.`,
+                          });
+                        }}
+                        className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow-sm transition inline-flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        ✓ Yes, Confirm All {batchProgress.succeededCount} Printed
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <>
+                  <div className="flex items-center justify-end gap-2">
                     {batchProgress.failedItems.length > 0 && (
                       <button
                         type="button"
@@ -1230,8 +1326,74 @@ export default function PrintQueuePage() {
                     >
                       Done
                     </button>
-                  </>
+                  </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Single Card Physical Print Confirmation Modal */}
+        {pendingConfirmJob && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-600">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Physical Print Confirmation</h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    {pendingConfirmJob.cardNumber} • {pendingConfirmJob.holderNameEn}
+                  </p>
+                </div>
+              </div>
+              <div className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1">
+                <p className="font-semibold text-slate-800">
+                  Did this badge print successfully on <span className="text-purple-700">{activePrinterIdentifier}</span>?
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  If you cancelled the print dialog or the ribbon jammed, click <strong>"✕ Cancelled / Keep in Queue"</strong> so this card remains in queue without needing a reprint authorization.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cardNum = pendingConfirmJob.cardNumber;
+                    setPendingConfirmJob(null);
+                    setFeedbackMessage({ text: `Print cancelled. Card ${cardNum} kept in queue.` });
+                  }}
+                  className="px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  ✕ Cancelled / Keep in Queue
+                </button>
+                <button
+                  type="button"
+                  disabled={confirmingPrint}
+                  onClick={async () => {
+                    setConfirmingPrint(true);
+                    try {
+                      const res = await dispatchPrint(pendingConfirmJob.cardId, activePrinterIdentifier);
+                      if (res.success) {
+                        setFeedbackMessage({ text: `Card ${pendingConfirmJob.cardNumber} confirmed as printed!` });
+                        await fetchQueue();
+                        setTimeout(() => setFeedbackMessage(null), 4000);
+                      } else {
+                        setFeedbackMessage({ text: res.error || 'Failed to record print job.', error: true });
+                      }
+                    } catch (err: any) {
+                      setFeedbackMessage({ text: err.message, error: true });
+                    } finally {
+                      setConfirmingPrint(false);
+                      setPendingConfirmJob(null);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow transition disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  {confirmingPrint ? 'Confirming...' : '✓ Yes, Confirm Printed'}
+                </button>
               </div>
             </div>
           </div>
@@ -1267,33 +1429,35 @@ export default function PrintQueuePage() {
           </div>
         )}
 
-        {/* Hidden 300 DPI CR80 Card Staging for Physical Batch Printing */}
-        {batchStagingCard && (
+        {/* Hidden 300 DPI CR80 Multi-Card Staging for Batch Printing */}
+        {batchStagingCards.length > 0 && (
           <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', pointerEvents: 'none', zIndex: -9999 }}>
-            <CR80Card
-              key={`batch-staging-${batchStagingCard.cardId}-${batchStagingCard.cardNumber}`}
-              id="cr80-batch-staging-card"
-              data={{
-                cardNumber: batchStagingCard.cardNumber,
-                qrToken: batchStagingCard.qrToken,
-                holderNameEn: batchStagingCard.holderNameEn,
-                holderNameGu: batchStagingCard.holderNameGu,
-                categoryEn: batchStagingCard.categoryEn,
-                categoryGu: batchStagingCard.categoryGu,
-                categoryCode: batchStagingCard.categoryCode,
-                gender: batchStagingCard.gender,
-                photoUrl: batchStagingCard.photoUrl,
-                validFrom: '01-Oct-2026',
-                validTo: '12-Oct-2026',
-                areaZone: 'East Zone / Vasad',
-                eventNameEn: 'NAVRATRI MAHOTSAV 2026',
-                organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
-                physicalFormNumber: batchStagingCard.physicalFormNumber || null,
-                receiptNumber: batchStagingCard.receiptNumber || null,
-              }}
-              theme={batchStagingCard.theme}
-              scale={1.0}
-            />
+            {batchStagingCards.map((card) => (
+              <CR80Card
+                key={`batch-staging-${card.cardId}`}
+                id={`cr80-batch-staging-${card.cardId}`}
+                data={{
+                  cardNumber: card.cardNumber,
+                  qrToken: card.qrToken,
+                  holderNameEn: card.holderNameEn,
+                  holderNameGu: card.holderNameGu,
+                  categoryEn: card.categoryEn,
+                  categoryGu: card.categoryGu,
+                  categoryCode: card.categoryCode,
+                  gender: card.gender,
+                  photoUrl: card.photoUrl,
+                  validFrom: '01-Oct-2026',
+                  validTo: '12-Oct-2026',
+                  areaZone: 'East Zone / Vasad',
+                  eventNameEn: 'NAVRATRI MAHOTSAV 2026',
+                  organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
+                  physicalFormNumber: card.physicalFormNumber || null,
+                  receiptNumber: card.receiptNumber || null,
+                }}
+                theme={card.theme}
+                scale={1.0}
+              />
+            ))}
           </div>
         )}
       </div>

@@ -382,6 +382,95 @@ export async function batchDispatchPrint(
 }
 
 /**
+ * Reverts a card from PRINTED back to PRINT_QUEUED if print was cancelled in preview or jammed.
+ * Prevents requiring a formal reprint request when no physical card was actually printed.
+ */
+export async function revertCardToQueue(
+  cardId: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const session = await getCurrentUserSession();
+    if (!session || !canPerformAction(session.roleCode, 'PRINT_CARD')) {
+      return {
+        success: false,
+        error: 'Unauthorized: You do not have permission to modify print queue.',
+      };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Fetch current card
+    const { data: card, error: fetchErr } = await adminClient
+      .from('id_cards')
+      .select('*')
+      .eq('id', cardId)
+      .single();
+
+    if (fetchErr || !card) {
+      return { success: false, error: 'Card record not found.' };
+    }
+
+    const currentMetadata = (card.metadata && typeof card.metadata === 'object') ? card.metadata : {};
+    const adjustedPrintCount = Math.max(0, (Number(currentMetadata.print_count) || 1) - 1);
+
+    // 2. Put card back to PRINT_QUEUED with decremented print_count
+    const { error: updateErr } = await adminClient
+      .from('id_cards')
+      .update({
+        status: 'PRINT_QUEUED',
+        metadata: {
+          ...currentMetadata,
+          print_count: adjustedPrintCount,
+        },
+        updated_at: now,
+      })
+      .eq('id', cardId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    // 3. Remove the most recent print_job if it was logged
+    const { data: latestJobs } = await adminClient
+      .from('print_jobs')
+      .select('id')
+      .eq('card_id', cardId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (latestJobs && latestJobs.length > 0) {
+      await adminClient
+        .from('print_jobs')
+        .delete()
+        .eq('id', latestJobs[0].id);
+    }
+
+    // 4. Record audit log
+    await adminClient.from('audit_logs').insert({
+      event_id: card.event_id,
+      user_id: session.id,
+      action: 'CARD_PRINT_REVERTED',
+      resource_type: 'ID_CARD',
+      resource_id: cardId,
+      details: {
+        card_number: card.card_number,
+        reason: 'Operator cancelled print dialog or requested queue rollback',
+        reverted_by: session.email,
+      },
+    });
+
+    return {
+      success: true,
+      message: `Card ${card.card_number} returned to Print Queue (Status: QUEUED).`,
+    };
+  } catch (err: any) {
+    console.error('revertCardToQueue error:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Authorizes and requests a controlled reprint with mandatory reason and audit log.
  */
 export async function requestCardReprint(params: {

@@ -292,11 +292,11 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
   const iframe = document.createElement('iframe');
   iframe.id = 'cr80-isolated-print-frame';
   iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '10px';
-  iframe.style.height = '10px';
-  iframe.style.opacity = '0.01';
+  iframe.style.left = '0';
+  iframe.style.top = '0';
+  iframe.style.width = '100vw';
+  iframe.style.height = '100vh';
+  iframe.style.opacity = '0.001';
   iframe.style.pointerEvents = 'none';
   iframe.style.border = 'none';
   iframe.style.zIndex = '-9999';
@@ -329,37 +329,45 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
             size: 53.98mm 85.60mm;
             margin: 0mm;
           }
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+          *, *:before, *:after {
+            box-sizing: border-box !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
           html, body {
-            margin: 0;
-            padding: 0;
-            background: #ffffff;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 53.98mm !important;
+            background: #ffffff !important;
           }
           .card-page {
-            width: 53.98mm;
-            height: 85.60mm;
-            page-break-after: always;
-            break-after: page;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
+            display: block !important;
+            position: relative !important;
+            width: 53.98mm !important;
+            height: 85.60mm !important;
+            page-break-before: auto !important;
+            page-break-after: always !important;
+            page-break-inside: avoid !important;
+            break-before: auto !important;
+            break-after: page !important;
+            break-inside: avoid !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
           }
           .card-page:last-child {
-            page-break-after: auto;
-            break-after: auto;
+            page-break-after: auto !important;
+            break-after: auto !important;
           }
           .card-img {
-            width: 53.98mm;
-            height: 85.60mm;
-            object-fit: fill;
-            display: block;
+            display: block !important;
+            width: 53.98mm !important;
+            height: 85.60mm !important;
+            max-width: 53.98mm !important;
+            max-height: 85.60mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            object-fit: fill !important;
           }
         </style>
       </head>
@@ -388,7 +396,7 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
     })
   );
 
-  await new Promise((r) => setTimeout(r, 350));
+  await new Promise((r) => setTimeout(r, 400));
 
   iframe.contentWindow?.focus();
   iframe.contentWindow?.print();
