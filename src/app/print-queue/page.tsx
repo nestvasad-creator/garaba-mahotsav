@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   RefreshCw,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   Clock,
   Layers,
@@ -27,6 +28,27 @@ import {
 import { CR80Card, CardRenderData } from '@/components/card-renderer/CR80Card';
 import { saveCardAsImage, printCardDirectly } from '@/lib/cards/exportCard';
 import { ReprintReason } from '@/types';
+
+interface BatchPrintFailedItem {
+  cardId: string;
+  cardNumber: string;
+  holderName?: string;
+  error: string;
+}
+
+interface BatchPrintProgressState {
+  isOpen: boolean;
+  isProcessing: boolean;
+  total: number;
+  current: number;
+  currentCardNumber: string;
+  currentCardName: string;
+  percent: number;
+  printerIdentifier: string;
+  succeededCount: number;
+  failedItems: BatchPrintFailedItem[];
+  isComplete: boolean;
+}
 
 export default function PrintQueuePage() {
   const [currentRoleCode, setCurrentRoleCode] = useState<string | undefined>(undefined);
@@ -55,6 +77,20 @@ export default function PrintQueuePage() {
   );
   const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<BatchPrintProgressState>({
+    isOpen: false,
+    isProcessing: false,
+    total: 0,
+    current: 0,
+    currentCardNumber: '',
+    currentCardName: '',
+    percent: 0,
+    printerIdentifier: '',
+    succeededCount: 0,
+    failedItems: [],
+    isComplete: false,
+  });
+  const abortBatchRef = React.useRef(false);
 
   const fetchQueue = async () => {
     setLoadingQueue(true);
@@ -142,32 +178,119 @@ export default function PrintQueuePage() {
     }, 250);
   };
 
-  const handleBatchPrint = async () => {
-    const queuedCards = queue.filter((j) => j.status === 'QUEUED');
-    if (queuedCards.length === 0) {
-      setFeedbackMessage({ text: 'No cards currently in QUEUED status.', error: true });
+  const handleBatchPrint = async (cardsOverride?: PrintQueueItem[]) => {
+    const targetCards = cardsOverride || queue.filter((j) => j.status === 'QUEUED');
+    if (targetCards.length === 0) {
+      setFeedbackMessage({ text: 'No cards currently in QUEUED status to print.', error: true });
       return;
     }
 
+    abortBatchRef.current = false;
     setBatchPrinting(true);
     setFeedbackMessage(null);
-    try {
-      const ids = queuedCards.map((c) => c.cardId);
-      const res = await batchDispatchPrint(ids, activePrinterIdentifier);
-      if (!res.success) {
-        setFeedbackMessage({ text: res.error || 'Batch print failed.', error: true });
-      } else {
-        setFeedbackMessage({
-          text: `Batch dispatched to ${activePrinterIdentifier}! ${res.count} cards successfully sent to PVC printer queue.`,
-        });
-        await fetchQueue();
-        setTimeout(() => setFeedbackMessage(null), 5000);
+
+    setBatchProgress({
+      isOpen: true,
+      isProcessing: true,
+      total: targetCards.length,
+      current: 0,
+      currentCardNumber: targetCards[0].cardNumber,
+      currentCardName: targetCards[0].holderNameEn,
+      percent: 0,
+      printerIdentifier: activePrinterIdentifier,
+      succeededCount: 0,
+      failedItems: [],
+      isComplete: false,
+    });
+
+    let succeeded = 0;
+    const failed: BatchPrintFailedItem[] = [];
+
+    for (let i = 0; i < targetCards.length; i++) {
+      if (abortBatchRef.current) {
+        break;
       }
-    } catch (err: any) {
-      setFeedbackMessage({ text: err.message, error: true });
-    } finally {
-      setBatchPrinting(false);
+
+      const card = targetCards[i];
+      const progressPercent = Math.round(((i + 1) / targetCards.length) * 100);
+
+      setBatchProgress((prev) => ({
+        ...prev,
+        current: i + 1,
+        currentCardNumber: card.cardNumber,
+        currentCardName: card.holderNameEn,
+        percent: progressPercent,
+      }));
+
+      try {
+        const res = await dispatchPrint(card.cardId, activePrinterIdentifier);
+        if (res.success) {
+          succeeded++;
+          setBatchProgress((prev) => ({ ...prev, succeededCount: succeeded }));
+        } else {
+          failed.push({
+            cardId: card.cardId,
+            cardNumber: card.cardNumber,
+            holderName: card.holderNameEn,
+            error: res.error || 'Print dispatch rejected by server',
+          });
+          setBatchProgress((prev) => ({ ...prev, failedItems: [...failed] }));
+        }
+      } catch (err: any) {
+        failed.push({
+          cardId: card.cardId,
+          cardNumber: card.cardNumber,
+          holderName: card.holderNameEn,
+          error: err.message || 'Unexpected communication failure',
+        });
+        setBatchProgress((prev) => ({ ...prev, failedItems: [...failed] }));
+      }
+
+      // Small pause for smooth visual progression in UI
+      await new Promise((resolve) => setTimeout(resolve, 80));
     }
+
+    await fetchQueue();
+
+    setBatchProgress((prev) => ({
+      ...prev,
+      isProcessing: false,
+      isComplete: true,
+      percent: 100,
+    }));
+    setBatchPrinting(false);
+
+    if (failed.length === 0) {
+      setFeedbackMessage({
+        text: `Batch print completed! All ${succeeded} cards successfully dispatched to ${activePrinterIdentifier}.`,
+      });
+    } else if (succeeded > 0) {
+      setFeedbackMessage({
+        text: `Batch print finished with issues: ${succeeded} succeeded, ${failed.length} failed. Check the details modal.`,
+        error: true,
+      });
+    } else {
+      setFeedbackMessage({
+        text: `Batch print failed for all ${failed.length} cards.`,
+        error: true,
+      });
+    }
+  };
+
+  const handleRetryFailedBatch = () => {
+    const failedIds = new Set(batchProgress.failedItems.map((f) => f.cardId));
+    const retryCards = queue.filter((c) => failedIds.has(c.cardId));
+    if (retryCards.length > 0) {
+      handleBatchPrint(retryCards);
+    }
+  };
+
+  const handleCancelBatch = () => {
+    abortBatchRef.current = true;
+  };
+
+  const handleCloseBatchModal = () => {
+    setBatchProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const handleConfirmReprint = async () => {
@@ -284,7 +407,7 @@ export default function PrintQueuePage() {
               Refresh
             </button>
             <button
-              onClick={handleBatchPrint}
+              onClick={() => handleBatchPrint()}
               disabled={batchPrinting || queuedCount === 0}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 shadow-sm transition disabled:opacity-50"
             >
@@ -750,6 +873,199 @@ export default function PrintQueuePage() {
                 >
                   {reprintSubmitting ? 'Authorizing...' : 'Authorize & Queue Reprint'}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Batch Print Progress & Result Modal */}
+        {batchProgress.isOpen && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                      batchProgress.isProcessing
+                        ? 'bg-purple-100 text-purple-600'
+                        : batchProgress.failedItems.length > 0
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {batchProgress.isProcessing ? (
+                      <Printer className="w-5 h-5 animate-pulse" />
+                    ) : batchProgress.failedItems.length > 0 ? (
+                      <AlertTriangle className="w-5 h-5" />
+                    ) : (
+                      <CheckCircle2 className="w-5 h-5" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      {batchProgress.isProcessing
+                        ? 'Batch Printing in Progress'
+                        : batchProgress.failedItems.length > 0
+                        ? 'Batch Print Completed with Issues'
+                        : 'Batch Print Complete!'}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Destination:{' '}
+                      <span className="font-semibold text-slate-800">
+                        {batchProgress.printerIdentifier}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                {!batchProgress.isProcessing && (
+                  <button
+                    onClick={handleCloseBatchModal}
+                    className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Progress Bar & Live Status */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-600">
+                    {batchProgress.isProcessing ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping inline-block" />
+                        Processing Card {batchProgress.current} of {batchProgress.total}
+                      </span>
+                    ) : (
+                      `${batchProgress.succeededCount} of ${batchProgress.total} cards dispatched successfully`
+                    )}
+                  </span>
+                  <span className="font-bold text-slate-900 font-mono">
+                    {batchProgress.percent}%
+                  </span>
+                </div>
+
+                {/* Visual Progress Bar */}
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ease-out ${
+                      batchProgress.failedItems.length > 0 && !batchProgress.isProcessing
+                        ? 'bg-gradient-to-r from-purple-600 via-amber-500 to-rose-500'
+                        : 'bg-gradient-to-r from-purple-600 to-emerald-500'
+                    }`}
+                    style={{ width: `${batchProgress.percent}%` }}
+                  />
+                </div>
+
+                {/* Active Card Indicator while processing */}
+                {batchProgress.isProcessing && (
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex items-center justify-between text-xs">
+                    <div className="truncate mr-2">
+                      <span className="text-slate-400 text-[11px] block">
+                        Currently Dispatching:
+                      </span>
+                      <span className="font-bold text-slate-800">
+                        {batchProgress.currentCardName}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 flex-shrink-0">
+                      {batchProgress.currentCardNumber}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Stats Counters */}
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
+                  <div className="text-[11px] text-slate-500">Total Cards</div>
+                  <div className="text-base font-bold text-slate-800">
+                    {batchProgress.total}
+                  </div>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2">
+                  <div className="text-[11px] text-emerald-700">Dispatched</div>
+                  <div className="text-base font-bold text-emerald-700">
+                    {batchProgress.succeededCount}
+                  </div>
+                </div>
+                <div
+                  className={`rounded-xl p-2 border ${
+                    batchProgress.failedItems.length > 0
+                      ? 'bg-rose-50 border-rose-200 text-rose-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-400'
+                  }`}
+                >
+                  <div className="text-[11px]">Errors</div>
+                  <div className="text-base font-bold">
+                    {batchProgress.failedItems.length}
+                  </div>
+                </div>
+              </div>
+
+              {/* Error Detail Breakdown List */}
+              {batchProgress.failedItems.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-rose-700">
+                    <span className="flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Failed Cards Details ({batchProgress.failedItems.length})
+                    </span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {batchProgress.failedItems.map((fail) => (
+                      <div
+                        key={fail.cardId}
+                        className="bg-rose-50/80 border border-rose-200 rounded-xl p-2.5 text-xs text-rose-900 flex flex-col gap-0.5"
+                      >
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="font-mono text-[11px]">{fail.cardNumber}</span>
+                          <span className="text-[11px] text-slate-600">
+                            {fail.holderName}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-rose-700 font-medium">
+                          Reason: {fail.error}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                {batchProgress.isProcessing ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelBatch}
+                    className="px-4 py-2 rounded-xl border border-rose-300 text-xs font-bold text-rose-700 hover:bg-rose-50 transition"
+                  >
+                    Cancel / Stop Batch
+                  </button>
+                ) : (
+                  <>
+                    {batchProgress.failedItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleRetryFailedBatch}
+                        className="px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 shadow-sm transition inline-flex items-center gap-1.5"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Retry Failed Cards ({batchProgress.failedItems.length})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleCloseBatchModal}
+                      className="px-5 py-2 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 shadow-sm transition"
+                    >
+                      Done
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
