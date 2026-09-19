@@ -96,7 +96,7 @@ export async function saveCardAsImage(
     }
   } catch (initialError) {
     console.warn('Initial html-to-image export failed, retrying with fallback options:', initialError);
-    // Retry with basic options without overriding backgroundColor or scanning external stylesheets
+    // Retry with basic options
     dataUrl = format === 'jpeg'
       ? await toJpeg(element, { quality, pixelRatio: 2, skipFonts: true, cacheBust: true, includeQueryParams: true })
       : await toPng(element, { quality, pixelRatio: 2, skipFonts: true, cacheBust: true, includeQueryParams: true });
@@ -115,22 +115,98 @@ export async function saveCardAsImage(
 }
 
 /**
- * Sends a card element directly to the physical printer via an isolated print frame.
- * Formatted with exact CR80 dimensions (85.60mm x 53.98mm) and crisp colors.
+ * Renders a card element to a high-resolution 300 DPI PNG data URL,
+ * ensuring all photos and QR codes are fully loaded.
  */
-export async function printCardDirectly(element: HTMLElement): Promise<void> {
+export async function renderCardToDataUrl(element: HTMLElement): Promise<string> {
+  await ensureImagesLoaded(element);
+
+  const exportConfig = {
+    quality: 1,
+    pixelRatio: 3,
+    skipFonts: true,
+    cacheBust: true,
+    includeQueryParams: true,
+    filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
+    onImageErrorHandler: (err: any) => console.warn('Card export resource warning:', err),
+  };
+
+  try {
+    return await toPng(element, exportConfig);
+  } catch (err) {
+    console.warn('Initial 3x capture failed, retrying at 2x ratio:', err);
+    return await toPng(element, {
+      quality: 0.98,
+      pixelRatio: 2,
+      skipFonts: true,
+      cacheBust: true,
+      includeQueryParams: true,
+      filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
+    });
+  }
+}
+
+/**
+ * Sends card PNG data URLs directly to the Windows print spooler via the server-side
+ * /api/silent-print route (PowerShell mspaint /pt). No browser dialog is shown.
+ * Returns success/failure status.
+ */
+export async function silentPrintCards(
+  dataUrls: string[],
+  printerName: string
+): Promise<{ success: boolean; successCount: number; failCount: number; error?: string }> {
+  try {
+    const response = await fetch('/api/silent-print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataUrls, printerName }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return {
+        success: false,
+        successCount: 0,
+        failCount: dataUrls.length,
+        error: `HTTP ${response.status}: ${text}`,
+      };
+    }
+
+    const result = await response.json();
+    return {
+      success: result.success,
+      successCount: result.successCount ?? 0,
+      failCount: result.failCount ?? 0,
+      error: result.success ? undefined : (result.message || result.error),
+    };
+  } catch (err: any) {
+    console.warn('Silent print API call failed:', err);
+    return { success: false, successCount: 0, failCount: dataUrls.length, error: err.message };
+  }
+}
+
+/**
+ * Sends a card element directly to the physical printer.
+ * Tries silent printing via /api/silent-print first (no dialog).
+ * Falls back to iframe.print() (shows dialog) only if the server route fails.
+ * Formatted with exact CR80 dimensions (85.60mm x 53.98mm) — portrait, single-sided.
+ */
+export async function printCardDirectly(
+  element: HTMLElement,
+  printerName?: string
+): Promise<{ usedSilent: boolean }> {
   // 0. Ensure all card assets/photos are fully decoded in DOM
   await ensureImagesLoaded(element);
 
-  // 1. Capture card at high resolution (300 DPI equivalent) with cache busting
+  // 1. Capture card at high resolution (300 DPI equivalent)
   let dataUrl: string;
   try {
     dataUrl = await toPng(element, {
       quality: 1,
       pixelRatio: 3,
-      skipFonts: true, // Prevents SecurityError: CSSStyleSheet.cssRules getter
-      cacheBust: true, // Bypasses html-to-image internal photo cache
-      includeQueryParams: true, // Ensures unique cache keys per card
+      skipFonts: true,
+      cacheBust: true,
+      includeQueryParams: true,
       filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
       onImageErrorHandler: (err: any) => console.warn('Card print resource warning:', err),
     });
@@ -147,12 +223,22 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
     });
   }
 
-  // 2. Tear down any existing print iframe to guarantee fresh print buffer
+  // 2. Try silent print via server API route (no browser dialog)
+  if (printerName) {
+    const silentResult = await silentPrintCards([dataUrl], printerName);
+    if (silentResult.success) {
+      console.info(`[CR80Print] Silent print succeeded for 1 card on ${printerName}`);
+      return { usedSilent: true };
+    }
+    console.warn(
+      `[CR80Print] Silent print failed (${silentResult.error}), falling back to dialog...`
+    );
+  }
+
+  // 3. Fallback: iframe print (shows system dialog)
   const existingIframe = document.getElementById('cr80-isolated-print-frame');
   if (existingIframe) {
-    try {
-      existingIframe.remove();
-    } catch (_) {}
+    try { existingIframe.remove(); } catch (_) {}
   }
 
   const iframe = document.createElement('iframe');
@@ -171,10 +257,9 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
   const doc = iframe.contentWindow?.document;
   if (!doc) {
     console.error('Failed to access isolated print frame document');
-    return;
+    return { usedSilent: false };
   }
 
-  // 3. Write strict CR80 print HTML
   doc.open();
   doc.write(`
     <!DOCTYPE html>
@@ -183,7 +268,7 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
         <title>Print CR80 ID Card</title>
         <style>
           @page {
-            size: 53.98mm 85.60mm;
+            size: 53.98mm 85.60mm portrait;
             margin: 0mm;
           }
           * {
@@ -226,7 +311,6 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
   `);
   doc.close();
 
-  // 4. Wait for iframe image render and trigger print
   await new Promise((resolve) => {
     const img = doc.getElementById('print-card-img') as HTMLImageElement;
     if (img && !img.complete) {
@@ -239,54 +323,40 @@ export async function printCardDirectly(element: HTMLElement): Promise<void> {
 
   iframe.contentWindow?.focus();
   iframe.contentWindow?.print();
-}
 
-/**
- * Renders a card element to a high-resolution 300 DPI PNG data URL, ensuring all photos and QR codes are fully loaded.
- */
-export async function renderCardToDataUrl(element: HTMLElement): Promise<string> {
-  await ensureImagesLoaded(element);
-
-  const exportConfig = {
-    quality: 1,
-    pixelRatio: 3,
-    skipFonts: true,
-    cacheBust: true,
-    includeQueryParams: true,
-    filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
-    onImageErrorHandler: (err: any) => console.warn('Card export resource warning:', err),
-  };
-
-  try {
-    return await toPng(element, exportConfig);
-  } catch (err) {
-    console.warn('Initial 3x capture failed, retrying at 2x ratio:', err);
-    return await toPng(element, {
-      quality: 0.98,
-      pixelRatio: 2,
-      skipFonts: true,
-      cacheBust: true,
-      includeQueryParams: true,
-      filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
-    });
-  }
+  return { usedSilent: false };
 }
 
 /**
  * Sends multiple cards to the physical printer in a single continuous multi-page print job.
- * Formats every card as a distinct page with exact CR80 dimensions (53.98mm x 85.60mm).
- * Perfect for Zebra ZC300, Fargo DTC1250e, Evolis, and PVC card tray printers to feed and print
- * cards sequentially without requiring the operator to click print for each card.
+ * Tries silent printing via /api/silent-print first (no browser dialog).
+ * Falls back to iframe.print() only if the server route is unavailable.
+ * Each card is a distinct page at exact CR80 dimensions (53.98mm x 85.60mm), portrait, single-sided.
  */
-export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<void> {
-  if (cardDataUrls.length === 0) return;
+export async function printBatchCardsDirectly(
+  cardDataUrls: string[],
+  printerName?: string
+): Promise<{ usedSilent: boolean }> {
+  if (cardDataUrls.length === 0) return { usedSilent: false };
 
-  // 1. Tear down any existing print iframe
+  // 1. Try silent print via server API route (no browser dialog)
+  if (printerName) {
+    const silentResult = await silentPrintCards(cardDataUrls, printerName);
+    if (silentResult.success) {
+      console.info(
+        `[CR80Print] Silent batch print succeeded: ${silentResult.successCount} card(s) on ${printerName}`
+      );
+      return { usedSilent: true };
+    }
+    console.warn(
+      `[CR80Print] Silent batch print failed (${silentResult.error}), falling back to dialog for ${cardDataUrls.length} card(s)...`
+    );
+  }
+
+  // 2. Fallback: iframe multi-page print (shows system dialog once)
   const existingIframe = document.getElementById('cr80-isolated-print-frame');
   if (existingIframe) {
-    try {
-      existingIframe.remove();
-    } catch (_) {}
+    try { existingIframe.remove(); } catch (_) {}
   }
 
   const iframe = document.createElement('iframe');
@@ -305,7 +375,7 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
   const doc = iframe.contentWindow?.document;
   if (!doc) {
     console.error('Failed to access isolated print frame document');
-    return;
+    return { usedSilent: false };
   }
 
   const pagesHtml = cardDataUrls
@@ -326,7 +396,7 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
         <title>Batch Print CR80 Cards (${cardDataUrls.length} Cards)</title>
         <style>
           @page {
-            size: 53.98mm 85.60mm;
+            size: 53.98mm 85.60mm portrait;
             margin: 0mm;
           }
           *, *:before, *:after {
@@ -400,5 +470,6 @@ export async function printBatchCardsDirectly(cardDataUrls: string[]): Promise<v
 
   iframe.contentWindow?.focus();
   iframe.contentWindow?.print();
-}
 
+  return { usedSilent: false };
+}

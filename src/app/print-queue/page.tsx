@@ -174,7 +174,10 @@ export default function PrintQueuePage() {
       const el = document.getElementById('cr80-staging-card');
       if (el) {
         try {
-          await printCardDirectly(el);
+          const result = await printCardDirectly(el, activePrinterIdentifier);
+          if (result.usedSilent) {
+            setFeedbackMessage({ text: `Card sent silently to ${activePrinterIdentifier} — no dialog needed.` });
+          }
         } catch (e: any) {
           console.warn('Physical print error:', e);
         }
@@ -186,6 +189,7 @@ export default function PrintQueuePage() {
       setPendingConfirmJob(job);
     }, 250);
   };
+
 
   const handleRevertToQueue = async (cardId: string) => {
     setActionInProgressId(cardId);
@@ -321,15 +325,17 @@ export default function PrintQueuePage() {
     setBatchStagingCards([]);
 
     // 3. Send all captured cards to the physical printer via multi-page CR80 job
+    let usedSilent = false;
     if (capturedUrls.length > 0 && !abortBatchRef.current) {
       setBatchProgress((prev) => ({
         ...prev,
         stage: 'dialog',
-        statusText: `Opening print dialog for ${capturedUrls.length} cards on ${activePrinterIdentifier}...`,
+        statusText: `Sending ${capturedUrls.length} card(s) to ${activePrinterIdentifier}...`,
       }));
 
       try {
-        await printBatchCardsDirectly(capturedUrls);
+        const printResult = await printBatchCardsDirectly(capturedUrls, activePrinterIdentifier);
+        usedSilent = printResult.usedSilent;
       } catch (printErr: any) {
         console.warn('Physical batch print invocation error:', printErr);
       }
@@ -340,7 +346,9 @@ export default function PrintQueuePage() {
       ...prev,
       isProcessing: false,
       stage: 'confirming',
-      statusText: `Print dialog opened for ${succeeded} cards. Please confirm if badges printed successfully.`,
+      statusText: usedSilent
+        ? `${succeeded} card(s) sent silently to ${activePrinterIdentifier} (no dialog). Please confirm if badges printed successfully.`
+        : `Print dialog opened for ${succeeded} cards. Please confirm if badges printed successfully.`,
       percent: 100,
       capturedCardIds,
     }));

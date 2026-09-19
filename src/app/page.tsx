@@ -380,49 +380,6 @@ export default async function Home() {
               </Link>
             </div>
 
-            {/* Quick Demo Credentials */}
-            <div className="border-t border-slate-100 pt-6 text-left">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1 text-center">
-                Test Accounts by Role (Password: <code className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">TestUser@2026</code>)
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs mt-3">
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-purple-700 block">Test Super Admin</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">superadmin@test.com</span>
-                  <span className="text-[10px] text-slate-400">All 9 Modules</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-blue-700 block">Test Event Admin</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">admin@test.com</span>
-                  <span className="text-[10px] text-slate-400">Admin Operations</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-emerald-700 block">Test Verifier</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">verifier@test.com</span>
-                  <span className="text-[10px] text-slate-400">Verification Desk</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-amber-700 block">Test Data Entry (DEO)</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">deo@test.com</span>
-                  <span className="text-[10px] text-slate-400">Registration Desk</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-rose-700 block">Test Special ID</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">specialid@test.com</span>
-                  <span className="text-[10px] text-slate-400">Special Passes</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-indigo-700 block">Test Printer Operator</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">printer@test.com</span>
-                  <span className="text-[10px] text-slate-400">CR80 Print Queue</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="font-bold text-teal-700 block">Test Security Officer</span>
-                  <span className="text-[11px] text-slate-700 font-mono block mt-0.5">security@test.com</span>
-                  <span className="text-[10px] text-slate-400">QR Gate Scanner</span>
-                </div>
-              </div>
-            </div>
           </div>
         )}
       </main>
