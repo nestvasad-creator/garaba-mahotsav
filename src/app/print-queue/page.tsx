@@ -114,8 +114,8 @@ export default function PrintQueuePage() {
     init();
   }, []);
 
-  // Printer Selector State
-  const [selectedPrinter, setSelectedPrinter] = useState<string>('FARGO-DTC1250e-USB01');
+  // Printer Selector State (Zebra ZC300 Card Printer defaulted as primary connected hardware)
+  const [selectedPrinter, setSelectedPrinter] = useState<string>('ZEBRA-ZC300-USB01');
   const [customPrinterName, setCustomPrinterName] = useState<string>('');
 
   const activePrinterIdentifier =
@@ -516,8 +516,8 @@ export default function PrintQueuePage() {
                 onChange={(e) => setSelectedPrinter(e.target.value)}
                 className="text-xs font-semibold bg-purple-50/70 border border-purple-300 rounded-xl px-3 py-1.5 text-purple-950 focus:bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none cursor-pointer shadow-xs"
               >
+                <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01) — Connected / Default</option>
                 <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
-                <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01)</option>
                 <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
                 <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>
                 <option value="EPSON-L8050-PVC">Epson L8050 PVC Card Tray</option>
@@ -724,8 +724,8 @@ export default function PrintQueuePage() {
                   onChange={(e) => setSelectedPrinter(e.target.value)}
                   className="text-xs font-semibold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:ring-2 focus:ring-purple-500 focus:outline-none"
                 >
+                  <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01) — Connected / Default</option>
                   <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
-                  <option value="ZEBRA-ZC300-USB01">Zebra ZC300 Card Printer (USB 01)</option>
                   <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
                   <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>
                   <option value="EPSON-L8050-PVC">Epson L8050 PVC Card Tray</option>

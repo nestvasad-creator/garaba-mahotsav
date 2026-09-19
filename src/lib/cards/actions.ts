@@ -275,7 +275,7 @@ export async function getPrintQueue(
  */
 export async function dispatchPrint(
   cardId: string,
-  printerIdentifier: string = 'FARGO-DTC1250e-USB01'
+  printerIdentifier: string = 'ZEBRA-ZC300-USB01'
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const session = await getCurrentUserSession();
@@ -367,7 +367,7 @@ export async function dispatchPrint(
  */
 export async function batchDispatchPrint(
   cardIds: string[],
-  printerIdentifier: string = 'FARGO-DTC1250e-USB01'
+  printerIdentifier: string = 'ZEBRA-ZC300-USB01'
 ): Promise<{ success: boolean; count: number; error?: string }> {
   try {
     let successCount = 0;
