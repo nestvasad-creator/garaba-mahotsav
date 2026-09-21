@@ -471,6 +471,55 @@ export async function revertCardToQueue(
 }
 
 /**
+ * Reverts a batch of cards from PRINTED back to PRINT_QUEUED.
+ */
+export async function batchRevertToQueue(
+  cardIds: string[]
+): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    let successCount = 0;
+    for (const id of cardIds) {
+      const res = await revertCardToQueue(id);
+      if (res.success) successCount++;
+    }
+    return { success: true, count: successCount };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err.message };
+  }
+}
+
+/**
+ * Manually updates the print status of an ID card (either 'PRINTED' or 'QUEUED')
+ * with audit logging.
+ */
+export async function manualSetCardPrintStatus(
+  cardId: string,
+  targetStatus: 'PRINTED' | 'QUEUED',
+  printerIdentifier: string = 'MANUAL-OVERRIDE'
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  if (targetStatus === 'PRINTED') {
+    return dispatchPrint(cardId, printerIdentifier);
+  } else {
+    return revertCardToQueue(cardId);
+  }
+}
+
+/**
+ * Manually updates the print status of multiple ID cards in bulk.
+ */
+export async function batchManualSetCardPrintStatus(
+  cardIds: string[],
+  targetStatus: 'PRINTED' | 'QUEUED',
+  printerIdentifier: string = 'MANUAL-OVERRIDE'
+): Promise<{ success: boolean; count: number; error?: string }> {
+  if (targetStatus === 'PRINTED') {
+    return batchDispatchPrint(cardIds, printerIdentifier);
+  } else {
+    return batchRevertToQueue(cardIds);
+  }
+}
+
+/**
  * Authorizes and requests a controlled reprint with mandatory reason and audit log.
  */
 export async function requestCardReprint(params: {

@@ -122,11 +122,19 @@ foreach ($filePath in $cardFiles) {
         $doc.PrinterSettings.Duplex = [System.Drawing.Printing.Duplex]::Simplex
     }
 
+    # CRITICAL: Enforce Portrait orientation explicitly
+    $doc.DefaultPageSettings.Landscape = $false
+
+    # CRITICAL: Bypass driver printable area margins to start exactly at physical edge (0,0)
+    $doc.OriginAtMargins = $false
+
     $img = [System.Drawing.Image]::FromFile($filePath)
 
     $doc.add_PrintPage({
         param($sender, $ev)
-        # Fit CR80 card image directly to printable page bounds
+        $ev.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $ev.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        # Fit CR80 card image directly across total physical page bounds (full bleed)
         $ev.Graphics.DrawImage($img, $ev.PageBounds)
         $ev.HasMorePages = $false
     })

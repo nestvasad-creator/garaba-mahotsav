@@ -37,3 +37,6 @@ next-env.d.ts
 # python / scratch
 __pycache__/
 *.pyc
+
+# user attachments
+tt.png

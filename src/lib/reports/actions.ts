@@ -10,6 +10,7 @@ const DEFAULT_EVENT_ID = '00000000-0000-0000-0000-000000000010';
 
 export interface ReportRow {
   registrationNumber: string;
+  receiptNumber: string | null;
   cardNumber: string | null;
   holderNameEn: string;
   holderNameGu: string;
@@ -54,6 +55,7 @@ export interface ReportFilters {
 
 export type ReportSortKey =
   | 'registrationNumber'
+  | 'receiptNumber'
   | 'holderNameEn'
   | 'categoryEn'
   | 'createdAt'
@@ -121,6 +123,7 @@ export async function getReportRows(
       `
       id,
       registration_number,
+      receipt_number,
       full_name_en,
       full_name_gu,
       gender,
@@ -162,17 +165,18 @@ export async function getReportRows(
     regQuery = regQuery.lt('created_at', toDate.toISOString().split('T')[0]);
   }
 
-  // Server-side keyword search across name, gujarati name, mobile, and reg number
+  // Server-side keyword search across name, gujarati name, mobile, reg number, and receipt number
   if (filters.search && filters.search.trim()) {
     const s = filters.search.trim();
     regQuery = regQuery.or(
-      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%`
+      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%,receipt_number.ilike.%${s}%`
     );
   }
 
   // Server-side sorting
   const sortMap: Record<string, string> = {
     registrationNumber: 'registration_number',
+    receiptNumber: 'receipt_number',
     holderNameEn: 'full_name_en',
     createdAt: 'created_at',
   };
@@ -224,6 +228,7 @@ export async function getReportRows(
     const meta = card?.metadata ?? {};
     return {
       registrationNumber: r.registration_number,
+      receiptNumber: r.receipt_number || card?.metadata?.receipt_number || null,
       cardNumber: card?.card_number ?? null,
       holderNameEn: r.full_name_en,
       holderNameGu: r.full_name_gu,
@@ -291,6 +296,7 @@ export async function exportAllReportRows(
     .select(`
       id,
       registration_number,
+      receipt_number,
       full_name_en,
       full_name_gu,
       gender,
@@ -327,7 +333,7 @@ export async function exportAllReportRows(
   if (filters.search && filters.search.trim()) {
     const s = filters.search.trim();
     regQuery = regQuery.or(
-      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%`
+      `full_name_en.ilike.%${s}%,full_name_gu.ilike.%${s}%,mobile.ilike.%${s}%,registration_number.ilike.%${s}%,receipt_number.ilike.%${s}%`
     );
   }
 
@@ -368,6 +374,7 @@ export async function exportAllReportRows(
     const meta = card?.metadata ?? {};
     return {
       registrationNumber: r.registration_number,
+      receiptNumber: r.receipt_number || card?.metadata?.receipt_number || null,
       cardNumber: card?.card_number ?? null,
       holderNameEn: r.full_name_en,
       holderNameGu: r.full_name_gu,

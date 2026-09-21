@@ -43,6 +43,7 @@ export interface CR80CardProps {
   scale?: number; // scale factor for UI display (1.0 = native preview 260px x 412px)
   className?: string;
   id?: string;
+  isPrintMode?: boolean;
 }
 
 /**
@@ -64,7 +65,7 @@ export interface CR80CardProps {
  * 4. Dynamic Theme Colors: primaryColor (background), textColor (high-contrast text), accentColor (borders)
  */
 export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
-  ({ data, theme, scale = 1.0, className, id }, ref) => {
+  ({ data, theme, scale = 1.0, className, id, isPrintMode = false }, ref) => {
     const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
     const qrValue = data.qrToken || data.cardNumber || 'NEST-2026';
@@ -191,20 +192,24 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
 
     const displayReceiptNo = cleanReceiptNo;
 
-    // Responsive font sizing based on length to ensure it fits neatly, boldly, and completely above the QR code without truncation or clipping
-    let numFontSize = 11.5;
-    if (displayReceiptNo.length > 22) {
-      numFontSize = 7.5;
-    } else if (displayReceiptNo.length > 16) {
-      numFontSize = 8.5;
-    } else if (displayReceiptNo.length > 11) {
-      numFontSize = 9.5;
+    // Responsive font sizing based on length to ensure it fits neatly, boldly, prominently, and completely above the QR code without truncation or clipping
+    let numFontSize = 16.0;
+    if (displayReceiptNo.length > 24) {
+      numFontSize = 8.8;
+    } else if (displayReceiptNo.length > 19) {
+      numFontSize = 9.8;
+    } else if (displayReceiptNo.length > 15) {
+      numFontSize = 10.8;
+    } else if (displayReceiptNo.length > 12) {
+      numFontSize = 12.0;
+    } else if (displayReceiptNo.length > 9) {
+      numFontSize = 13.2;
     } else if (displayReceiptNo.length > 6) {
-      numFontSize = 10.5;
+      numFontSize = 14.5;
     } else {
-      numFontSize = 11.5;
+      numFontSize = 16.0;
     }
-    const scaledNumFontSize = Math.max(7.0, Math.round(numFontSize * scale * 10) / 10);
+    const scaledNumFontSize = Math.max(8.0, Math.round(numFontSize * scale * 10) / 10);
 
     const isDarkText =
       textColor.toLowerCase() === '#0f172a' ||
@@ -224,12 +229,18 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           backgroundRepeat: 'no-repeat',
           backgroundPosition: 'center',
           color: textColor,
-          borderColor: accentColor ? `${accentColor}50` : 'rgba(0,0,0,0.15)',
+          borderColor: isPrintMode ? 'transparent' : accentColor ? `${accentColor}50` : 'rgba(0,0,0,0.15)',
+          borderWidth: isPrintMode ? 0 : undefined,
+          borderRadius: isPrintMode ? 0 : undefined,
+          boxShadow: isPrintMode ? 'none' : undefined,
           WebkitPrintColorAdjust: 'exact',
           printColorAdjust: 'exact',
         }}
         className={cn(
-          'relative rounded-xl overflow-hidden shadow-md select-none print:shadow-none cr80-card-sheet font-sans border transition-colors duration-200',
+          'relative overflow-hidden select-none cr80-card-sheet font-sans transition-colors duration-200',
+          isPrintMode
+            ? 'rounded-none shadow-none border-0'
+            : 'rounded-xl shadow-md border print:rounded-none print:shadow-none print:border-none',
           className
         )}
       >
@@ -238,11 +249,11 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           <div
             style={{
               position: 'absolute',
-              left: '18%',
-              width: '64%',
-              maxWidth: '64%',
-              top: '20.4%',
-              height: '4.8%',
+              left: '10%',
+              width: '80%',
+              maxWidth: '80%',
+              top: '19.8%',
+              height: '5.4%',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -255,15 +266,16 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               style={{
                 color: textColor,
                 fontSize: `${scaledNumFontSize}px`,
-                lineHeight: 1,
-                letterSpacing: '0.03em',
-                fontWeight: 800,
+                lineHeight: 1.1,
+                letterSpacing: displayReceiptNo.length > 14 ? '0.01em' : '0.03em',
+                fontWeight: 900,
                 textShadow: isDarkText
                   ? '0 1px 2px rgba(255, 255, 255, 0.7)'
                   : '0 1px 2px rgba(0, 0, 0, 0.7)',
                 whiteSpace: 'nowrap',
                 overflow: 'visible',
                 wordBreak: 'keep-all',
+                textOverflow: 'clip',
               }}
               className="uppercase select-none font-extrabold"
               title={`Receipt: ${displayReceiptNo}`}

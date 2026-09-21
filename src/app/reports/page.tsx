@@ -81,6 +81,7 @@ function cardStatusBadge(status: string | null) {
 function generateCsv(rows: ReportRow[]): string {
   const headers = [
     'Registration No',
+    'Receipt No',
     'Card No',
     'Full Name (EN)',
     'Full Name (GU)',
@@ -103,6 +104,7 @@ function generateCsv(rows: ReportRow[]): string {
   const csvRows = rows.map((r) =>
     [
       escapeCell(r.registrationNumber),
+      escapeCell(r.receiptNumber ?? '—'),
       escapeCell(r.cardNumber ?? '—'),
       escapeCell(r.holderNameEn),
       escapeCell(r.holderNameGu),
@@ -764,7 +766,7 @@ export default function ReportsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search name, mobile, reg no across all records…"
+              placeholder="Search name, mobile, reg no, receipt no across all records…"
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="pl-8 pr-3 py-2 w-full rounded-xl border border-slate-200 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
@@ -880,6 +882,12 @@ export default function ReportsPage() {
                     Reg No <SortIcon k="registrationNumber" />
                   </th>
                   <th
+                    className="py-3 px-4 cursor-pointer hover:text-blue-600 select-none whitespace-nowrap"
+                    onClick={() => handleSort('receiptNumber')}
+                  >
+                    Receipt No <SortIcon k="receiptNumber" />
+                  </th>
+                  <th
                     className="py-3 px-4 cursor-pointer hover:text-blue-600 select-none"
                     onClick={() => handleSort('holderNameEn')}
                   >
@@ -913,7 +921,7 @@ export default function ReportsPage() {
                 {loading ? (
                   Array.from({ length: pageSize > 25 ? 8 : 5 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 9 }).map((_, j) => (
+                      {Array.from({ length: 10 }).map((_, j) => (
                         <td key={j} className="py-3 px-4">
                           <div className="h-3 bg-slate-100 rounded animate-pulse" />
                         </td>
@@ -922,7 +930,7 @@ export default function ReportsPage() {
                   ))
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400 text-sm">
+                    <td colSpan={10} className="py-12 text-center text-slate-400 text-sm">
                       <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                       No records found matching current filters.
                     </td>
@@ -932,6 +940,15 @@ export default function ReportsPage() {
                     <tr key={row.registrationNumber} className="hover:bg-slate-50/75 transition">
                       <td className="py-3 px-4 font-mono font-bold text-blue-600 whitespace-nowrap">
                         {row.registrationNumber}
+                      </td>
+                      <td className="py-3 px-4 font-mono whitespace-nowrap">
+                        {row.receiptNumber ? (
+                          <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200 text-xs font-bold">
+                            {row.receiptNumber}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 font-normal">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900">{row.holderNameEn}</div>

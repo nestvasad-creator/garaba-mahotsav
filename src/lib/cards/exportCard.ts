@@ -82,6 +82,12 @@ export async function saveCardAsImage(
     skipFonts: true, // Prevents SecurityError: CSSStyleSheet.cssRules getter on cross-origin stylesheets
     cacheBust: true, // Prevents html-to-image internal global cache from reusing previous photos
     includeQueryParams: true, // Preserves query params so proxy URLs with different cards have distinct cache keys
+    style: {
+      borderRadius: '0px',
+      border: 'none',
+      boxShadow: 'none',
+      margin: '0px',
+    },
     filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
     onImageErrorHandler: (err: any) => console.warn('Card export resource warning:', err),
   };
@@ -127,6 +133,12 @@ export async function renderCardToDataUrl(element: HTMLElement): Promise<string>
     skipFonts: true,
     cacheBust: true,
     includeQueryParams: true,
+    style: {
+      borderRadius: '0px',
+      border: 'none',
+      boxShadow: 'none',
+      margin: '0px',
+    },
     filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
     onImageErrorHandler: (err: any) => console.warn('Card export resource warning:', err),
   };
@@ -198,28 +210,32 @@ export async function printCardDirectly(
   // 0. Ensure all card assets/photos are fully decoded in DOM
   await ensureImagesLoaded(element);
 
-  // 1. Capture card at high resolution (300 DPI equivalent)
+  // 1. Capture card at high resolution (300 DPI equivalent) with square borderless full-bleed
   let dataUrl: string;
+  const printCaptureConfig = {
+    quality: 1,
+    pixelRatio: 3,
+    skipFonts: true,
+    cacheBust: true,
+    includeQueryParams: true,
+    style: {
+      borderRadius: '0px',
+      border: 'none',
+      boxShadow: 'none',
+      margin: '0px',
+    },
+    filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
+    onImageErrorHandler: (err: any) => console.warn('Card print resource warning:', err),
+  };
+
   try {
-    dataUrl = await toPng(element, {
-      quality: 1,
-      pixelRatio: 3,
-      skipFonts: true,
-      cacheBust: true,
-      includeQueryParams: true,
-      filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
-      onImageErrorHandler: (err: any) => console.warn('Card print resource warning:', err),
-    });
+    dataUrl = await toPng(element, printCaptureConfig);
   } catch (err) {
     console.warn('First render failed, retrying with fallback resolution:', err);
     dataUrl = await toPng(element, {
+      ...printCaptureConfig,
       quality: 0.98,
       pixelRatio: 2,
-      skipFonts: true,
-      cacheBust: true,
-      includeQueryParams: true,
-      filter: (node: HTMLElement) => node.tagName !== 'SCRIPT' && node.tagName !== 'LINK',
-      onImageErrorHandler: (fallbackErr: any) => console.warn('Card fallback warning:', fallbackErr),
     });
   }
 
@@ -256,44 +272,43 @@ export async function printCardDirectly(
         <title>Print CR80 ID Card</title>
         <style>
           @page {
-            size: 53.98mm 85.60mm portrait;
-            margin: 0mm;
-          }
-          * {
+            size: 53.98mm 85.60mm;
             margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+          }
+          *, *:before, *:after {
+            margin: 0 !important;
+            padding: 0 !important;
+            box-sizing: border-box !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            color-adjust: exact !important;
           }
           html, body {
-            margin: 0;
-            padding: 0;
-            width: 53.98mm;
-            height: 85.60mm;
-            overflow: hidden;
-            background: #ffffff;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            overflow: hidden !important;
+            background: transparent !important;
           }
-          .card-box {
-            width: 53.98mm;
-            height: 85.60mm;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-          }
-          img {
-            width: 53.98mm;
-            height: 85.60mm;
-            object-fit: fill;
-            display: block;
+          img#print-card-img {
+            position: absolute !important;
+            top: -0.8mm !important;
+            left: -0.8mm !important;
+            width: calc(100% + 1.6mm) !important;
+            height: calc(100% + 1.6mm) !important;
+            object-fit: fill !important;
+            display: block !important;
+            border: none !important;
+            outline: none !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
         </style>
       </head>
       <body>
-        <div class="card-box">
-          <img id="print-card-img" src="${dataUrl}" alt="ID Card" />
-        </div>
+        <img id="print-card-img" src="${dataUrl}" alt="ID Card" />
       </body>
     </html>
   `);
@@ -350,10 +365,10 @@ export async function printBatchCardsDirectly(
   const iframe = document.createElement('iframe');
   iframe.id = 'cr80-isolated-print-frame';
   iframe.style.position = 'fixed';
-  iframe.style.left = '0';
-  iframe.style.top = '0';
-  iframe.style.width = '100vw';
-  iframe.style.height = '100vh';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '53.98mm';
+  iframe.style.height = '85.60mm';
   iframe.style.opacity = '0.001';
   iframe.style.pointerEvents = 'none';
   iframe.style.border = 'none';
@@ -384,19 +399,22 @@ export async function printBatchCardsDirectly(
         <title>Batch Print CR80 Cards (${cardDataUrls.length} Cards)</title>
         <style>
           @page {
-            size: 53.98mm 85.60mm portrait;
-            margin: 0mm;
+            size: 53.98mm 85.60mm;
+            margin: 0;
           }
           *, *:before, *:after {
             box-sizing: border-box !important;
+            margin: 0 !important;
+            padding: 0 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            color-adjust: exact !important;
           }
           html, body {
             margin: 0 !important;
             padding: 0 !important;
             width: 53.98mm !important;
-            background: #ffffff !important;
+            background: transparent !important;
           }
           .card-page {
             display: block !important;
@@ -411,7 +429,7 @@ export async function printBatchCardsDirectly(
             break-inside: avoid !important;
             margin: 0 !important;
             padding: 0 !important;
-            overflow: visible !important;
+            overflow: hidden !important;
           }
           .card-page:last-child {
             page-break-after: auto !important;
@@ -419,13 +437,19 @@ export async function printBatchCardsDirectly(
           }
           .card-img {
             display: block !important;
-            width: 53.98mm !important;
-            height: 85.60mm !important;
-            max-width: 53.98mm !important;
-            max-height: 85.60mm !important;
+            position: absolute !important;
+            top: -0.8mm !important;
+            left: -0.8mm !important;
+            width: calc(100% + 1.6mm) !important;
+            height: calc(100% + 1.6mm) !important;
             margin: 0 !important;
             padding: 0 !important;
             object-fit: fill !important;
+            border: none !important;
+            outline: none !important;
+            border-radius: 0 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         </style>
       </head>
