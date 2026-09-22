@@ -102,7 +102,7 @@ export default function NewRegistrationPage() {
         value: trimmed,
       });
       if (!res.isUnique) {
-        setFormNoWarning(`⚠️ Form #${trimmed} already registered with ${res.conflictingName} (${res.conflictingRegNo})`);
+        setFormNoWarning(`Notice: Existing record found with Form #${trimmed} (${res.conflictingName} - ${res.conflictingRegNo})`);
       } else {
         setFormNoWarning(null);
       }
@@ -269,11 +269,6 @@ export default function NewRegistrationPage() {
       return;
     }
 
-    if (formNoWarning) {
-      setErrorMessage(formNoWarning);
-      return;
-    }
-
     if (receiptNoWarning) {
       setErrorMessage(receiptNoWarning);
       return;
@@ -422,6 +417,19 @@ export default function NewRegistrationPage() {
                 <p className="mt-1 leading-relaxed">{duplicateWarning}</p>
                 <p className="mt-1 text-[11px] text-amber-700">
                   Please verify the applicant identity before proceeding to avoid issuing double ID cards.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {formNoWarning && (
+            <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-3 shadow-sm">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Duplicate Physical Form Notice</p>
+                <p className="mt-1 leading-relaxed">{formNoWarning}</p>
+                <p className="mt-1 text-[11px] text-amber-700">
+                  Multiple registrations may share the same physical form number (e.g. family members or group forms). Submission is permitted.
                 </p>
               </div>
             </div>
@@ -587,23 +595,23 @@ export default function NewRegistrationPage() {
                       onBlur={() => handleCheckFormNo(formSerialNo)}
                       className={`w-full text-xs rounded-xl border p-3 font-mono font-bold uppercase tracking-wider bg-white focus:outline-none focus:ring-2 ${
                         formNoWarning
-                          ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/20'
+                          ? 'border-amber-400 focus:ring-amber-500 bg-amber-50/20'
                           : 'border-slate-300 focus:ring-blue-500'
                       }`}
                     />
                     {checkingFormNo && (
                       <span className="text-[10px] text-blue-600 mt-1 flex items-center gap-1 font-medium">
                         <div className="w-2.5 h-2.5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-                        Verifying uniqueness of form number...
+                        Checking database for existing form number...
                       </span>
                     )}
                     {formNoWarning && (
-                      <span className="text-[11px] text-rose-600 font-semibold mt-1.5 block bg-rose-50 border border-rose-200 p-2 rounded-lg">
-                        {formNoWarning}
+                      <span className="text-[11px] text-amber-800 font-semibold mt-1.5 block bg-amber-50 border border-amber-200 p-2 rounded-lg">
+                        ⚠️ {formNoWarning} (Submission still allowed)
                       </span>
                     )}
                     <span className="text-[10px] text-slate-500 mt-1 block">
-                      Physical paper application form serial number (must be unique)
+                      Physical paper application form serial number (duplicate entries permitted with notice)
                     </span>
                   </div>
 

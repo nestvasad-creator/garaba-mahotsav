@@ -228,23 +228,6 @@ export async function createRegistration(
 
   const resolvedFormNo = formNo?.trim() || (isSponsor ? `SPON-${randomDigits}` : '');
 
-  // Proactive Uniqueness check for physical_form_number (only if provided or not sponsor)
-  if (formNo && formNo.trim()) {
-    const { data: existForm } = await adminClient
-      .from('registrations')
-      .select('registration_number, full_name_en')
-      .eq('event_id', formData.event_id || DEFAULT_EVENT_ID)
-      .eq('physical_form_number', formNo.trim())
-      .maybeSingle();
-
-    if (existForm) {
-      return {
-        success: false,
-        error: `Physical Form Serial #${formNo.trim()} is already assigned to ${existForm.full_name_en} (${existForm.registration_number}). Form numbers must be unique.`,
-      };
-    }
-  }
-
   let receiptNo = formData.receipt_number?.trim().toUpperCase() || (formData as any).receiptNo?.trim().toUpperCase() || null;
   const gender = formData.gender || 'MALE';
 
@@ -289,24 +272,7 @@ export async function createRegistration(
     receipt_number: receiptNo || '',
   };
 
-  // 1. Proactive Uniqueness check for Physical Form Serial Number (if supplied)
-  if (formNo && formNo.trim()) {
-    const { data: existForm } = await adminClient
-      .from('registrations')
-      .select('registration_number, full_name_en')
-      .eq('event_id', payload.event_id)
-      .eq('physical_form_number', formNo.trim())
-      .maybeSingle();
-
-    if (existForm) {
-      return {
-        success: false,
-        error: `Physical Form Serial #${formNo.trim()} is already assigned to ${existForm.full_name_en} (${existForm.registration_number}). Physical Form Serial numbers must be unique.`,
-      };
-    }
-  }
-
-  // 2. Proactive Uniqueness check for Receipt Number (if entered)
+  // 1. Proactive Uniqueness check for Receipt Number (if entered)
   if (receiptNo) {
     const { data: existReceipt } = await adminClient
       .from('registrations')
@@ -781,22 +747,6 @@ export async function updateRegistration(
     }
     if (formData.pincode !== undefined) {
       updatePayload.pincode = formData.pincode;
-    }
-
-    // Proactive Uniqueness check for physical_form_number
-    const { data: existForm } = await adminClient
-      .from('registrations')
-      .select('registration_number, full_name_en')
-      .eq('event_id', currentReg.event_id)
-      .eq('physical_form_number', formNo)
-      .neq('id', id)
-      .maybeSingle();
-
-    if (existForm) {
-      return {
-        success: false,
-        error: `Physical Form Serial #${formNo} is already assigned to ${existForm.full_name_en} (${existForm.registration_number}). Form numbers must be unique.`,
-      };
     }
 
     // Proactive Uniqueness check for receipt_number if specified

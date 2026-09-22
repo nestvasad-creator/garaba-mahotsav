@@ -244,7 +244,7 @@ export default function RegistrationDetailPage() {
         excludeId: id,
       });
       if (!res.isUnique) {
-        setEditFormNoWarning(`⚠️ Form #${trimmed} is already assigned to ${res.conflictingName} (${res.conflictingRegNo})`);
+        setEditFormNoWarning(`Notice: Existing record found with Form #${trimmed} (${res.conflictingName} - ${res.conflictingRegNo})`);
       } else {
         setEditFormNoWarning(null);
       }
@@ -390,10 +390,6 @@ export default function RegistrationDetailPage() {
 
     if (!editFormNo.trim()) {
       setEditError('Physical Paper Form Serial Number is mandatory.');
-      return;
-    }
-    if (editFormNoWarning) {
-      setEditError(editFormNoWarning);
       return;
     }
     if (editReceiptNoWarning) {
@@ -1213,23 +1209,23 @@ export default function RegistrationDetailPage() {
                             placeholder="e.g. FORM-2026-001"
                             className={`w-full text-xs rounded-xl border p-2.5 font-mono font-bold uppercase tracking-wider bg-white focus:outline-none focus:ring-2 ${
                               editFormNoWarning
-                                ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/20'
+                                ? 'border-amber-400 focus:ring-amber-500 bg-amber-50/20'
                                 : 'border-slate-300 focus:ring-blue-500'
                             }`}
                           />
                           {checkingEditFormNo && (
                             <span className="text-[10px] text-blue-600 mt-1 flex items-center gap-1 font-medium">
                               <div className="w-2.5 h-2.5 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-                              Checking form number uniqueness...
+                              Checking database for existing form number...
                             </span>
                           )}
                           {editFormNoWarning && (
-                            <span className="text-[11px] text-rose-600 font-semibold mt-1.5 block bg-rose-50 border border-rose-200 p-2 rounded-lg">
-                              {editFormNoWarning}
+                            <span className="text-[11px] text-amber-800 font-semibold mt-1.5 block bg-amber-50 border border-amber-200 p-2 rounded-lg">
+                              ⚠️ {editFormNoWarning} (Submission still allowed)
                             </span>
                           )}
                           <p className="text-[10px] text-slate-500 mt-1">
-                            Physical paper application form serial number (must be unique).
+                            Physical paper application form serial number (duplicate entries permitted with notice).
                           </p>
                         </div>
 
