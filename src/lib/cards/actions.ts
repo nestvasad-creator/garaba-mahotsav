@@ -177,15 +177,38 @@ export async function getPrintQueue(
     }
 
     const photoMap = new Map<string, string>();
+    const cardToPathMap = new Map<string, string>();
+    const uniquePaths = new Set<string>();
+
     for (const c of cards) {
       const photoPath = c.recipient_photo_path || (c.registration_id ? regPhotoMap.get(c.registration_id) : null);
       if (photoPath) {
-        const { data: signed } = await adminClient.storage
+        cardToPathMap.set(c.id, photoPath);
+        uniquePaths.add(photoPath);
+      }
+    }
+
+    if (uniquePaths.size > 0) {
+      try {
+        const { data: batchSigned } = await adminClient.storage
           .from('event-photos')
-          .createSignedUrl(photoPath, 3600);
-        if (signed?.signedUrl) {
-          photoMap.set(c.id, signed.signedUrl);
+          .createSignedUrls(Array.from(uniquePaths), 3600);
+
+        const urlByPath = new Map<string, string>();
+        for (const item of batchSigned || []) {
+          if (item?.path && item?.signedUrl) {
+            urlByPath.set(item.path, item.signedUrl);
+          }
         }
+
+        for (const [cardId, path] of cardToPathMap.entries()) {
+          const url = urlByPath.get(path);
+          if (url) {
+            photoMap.set(cardId, url);
+          }
+        }
+      } catch (signErr) {
+        console.warn('Batch createSignedUrls warning in getPrintQueue:', signErr);
       }
     }
 
@@ -362,21 +385,94 @@ export async function dispatchPrint(
   }
 }
 
-/**
- * Dispatches a batch of cards for printing.
- */
 export async function batchDispatchPrint(
   cardIds: string[],
   printerIdentifier: string = 'ZEBRA-ZC300-USB01'
 ): Promise<{ success: boolean; count: number; error?: string }> {
   try {
-    let successCount = 0;
-    for (const id of cardIds) {
-      const res = await dispatchPrint(id, printerIdentifier);
-      if (res.success) successCount++;
+    const session = await getCurrentUserSession();
+    if (!session || !canPerformAction(session.roleCode, 'PRINT_CARD')) {
+      return { success: false, count: 0, error: 'Unauthorized to dispatch print jobs.' };
     }
-    return { success: true, count: successCount };
+
+    if (!cardIds || cardIds.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    const { data: cards, error: fetchErr } = await adminClient
+      .from('id_cards')
+      .select('id, event_id, card_number, recipient_name_en, metadata')
+      .in('id', cardIds);
+
+    if (fetchErr || !cards || cards.length === 0) {
+      return { success: false, count: 0, error: 'No matching cards found.' };
+    }
+
+    const printJobsToInsert: any[] = [];
+    const auditLogsToInsert: any[] = [];
+
+    await Promise.all(
+      cards.map(async (card) => {
+        const currentMetadata = (card.metadata && typeof card.metadata === 'object') ? card.metadata : {};
+        const newPrintCount = (Number(currentMetadata.print_count) || 0) + 1;
+        const jobNumber = `JOB-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+
+        printJobsToInsert.push({
+          event_id: card.event_id,
+          card_id: card.id,
+          job_number: jobNumber,
+          status: 'PRINTED',
+          is_reprint: Boolean(currentMetadata.reprint_count > 0),
+          printed_by: session.id,
+          printed_at: now,
+        });
+
+        auditLogsToInsert.push({
+          event_id: card.event_id,
+          user_id: session.id,
+          action: 'CARD_PRINTED',
+          resource_type: 'ID_CARD',
+          resource_id: card.id,
+          details: {
+            job_number: jobNumber,
+            card_number: card.card_number,
+            recipient_name_en: card.recipient_name_en,
+            print_count: newPrintCount,
+            printer: printerIdentifier,
+            printed_by_email: session.email,
+            printed_by_role: session.roleCode,
+          },
+        });
+
+        await adminClient
+          .from('id_cards')
+          .update({
+            status: 'PRINTED',
+            issued_at: now,
+            metadata: {
+              ...currentMetadata,
+              print_count: newPrintCount,
+              last_printer: printerIdentifier,
+            },
+            updated_at: now,
+          })
+          .eq('id', card.id);
+      })
+    );
+
+    if (printJobsToInsert.length > 0) {
+      await adminClient.from('print_jobs').insert(printJobsToInsert);
+    }
+    if (auditLogsToInsert.length > 0) {
+      await adminClient.from('audit_logs').insert(auditLogsToInsert);
+    }
+
+    return { success: true, count: cards.length };
   } catch (err: any) {
+    console.error('batchDispatchPrint error:', err);
     return { success: false, count: 0, error: err.message };
   }
 }
@@ -470,20 +566,72 @@ export async function revertCardToQueue(
   }
 }
 
-/**
- * Reverts a batch of cards from PRINTED back to PRINT_QUEUED.
- */
 export async function batchRevertToQueue(
   cardIds: string[]
 ): Promise<{ success: boolean; count: number; error?: string }> {
   try {
-    let successCount = 0;
-    for (const id of cardIds) {
-      const res = await revertCardToQueue(id);
-      if (res.success) successCount++;
+    const session = await getCurrentUserSession();
+    if (!session || !canPerformAction(session.roleCode, 'PRINT_CARD')) {
+      return { success: false, count: 0, error: 'Unauthorized to modify print queue.' };
     }
-    return { success: true, count: successCount };
+
+    if (!cardIds || cardIds.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    const { data: cards, error: fetchErr } = await adminClient
+      .from('id_cards')
+      .select('id, event_id, card_number, metadata')
+      .in('id', cardIds);
+
+    if (fetchErr || !cards || cards.length === 0) {
+      return { success: false, count: 0, error: 'No matching cards found.' };
+    }
+
+    const auditLogsToInsert: any[] = [];
+
+    await Promise.all(
+      cards.map(async (card) => {
+        const currentMetadata = (card.metadata && typeof card.metadata === 'object') ? card.metadata : {};
+        const adjustedPrintCount = Math.max(0, (Number(currentMetadata.print_count) || 1) - 1);
+
+        auditLogsToInsert.push({
+          event_id: card.event_id,
+          user_id: session.id,
+          action: 'CARD_PRINT_REVERTED',
+          resource_type: 'ID_CARD',
+          resource_id: card.id,
+          details: {
+            card_number: card.card_number,
+            reason: 'Operator cancelled print dialog or requested queue rollback',
+            reverted_by: session.email,
+          },
+        });
+
+        await adminClient
+          .from('id_cards')
+          .update({
+            status: 'PRINT_QUEUED',
+            metadata: {
+              ...currentMetadata,
+              print_count: adjustedPrintCount,
+            },
+            updated_at: now,
+          })
+          .eq('id', card.id);
+      })
+    );
+
+    if (auditLogsToInsert.length > 0) {
+      await adminClient.from('audit_logs').insert(auditLogsToInsert);
+    }
+
+    return { success: true, count: cards.length };
   } catch (err: any) {
+    console.error('batchRevertToQueue error:', err);
     return { success: false, count: 0, error: err.message };
   }
 }

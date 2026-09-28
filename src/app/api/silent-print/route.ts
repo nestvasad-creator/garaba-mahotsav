@@ -60,7 +60,7 @@ Add-Type -AssemblyName System.Drawing
 $requested = '${escapedPrinterName}'
 $installed = [System.Drawing.Printing.PrinterSettings]::InstalledPrinters
 
-# Match target printer: exact, case-insensitive, or substring (e.g. ZC300 or Zebra)
+# 1. Exact match
 $targetPrinter = $null
 foreach ($p in $installed) {
     if ($p -eq $requested) {
@@ -68,6 +68,8 @@ foreach ($p in $installed) {
         break
     }
 }
+
+# 2. Case-insensitive / Substring match
 if (-not $targetPrinter) {
     foreach ($p in $installed) {
         if ($p -like "*$requested*" -or $requested -like "*$p*") {
@@ -76,22 +78,51 @@ if (-not $targetPrinter) {
         }
     }
 }
-if (-not $targetPrinter -and ($requested -like "*ZEBRA*" -or $requested -like "*ZC300*")) {
-    foreach ($p in $installed) {
-        if ($p -like "*ZC300*" -or $p -like "*Zebra*") {
-            $targetPrinter = $p
-            break
+
+# 3. Brand-specific smart fallback (Evolis, Zebra, Fargo, Magicard)
+if (-not $targetPrinter) {
+    if ($requested -match '(?i)evolis|zenius|primacy|badgy|elypso') {
+        foreach ($p in $installed) {
+            if ($p -match '(?i)evolis|zenius|primacy|badgy|elypso') {
+                $targetPrinter = $p
+                break
+            }
+        }
+    } elseif ($requested -match '(?i)zebra|zc\d+|zxp') {
+        foreach ($p in $installed) {
+            if ($p -match '(?i)zebra|zc\d+|zxp') {
+                $targetPrinter = $p
+                break
+            }
+        }
+    } elseif ($requested -match '(?i)fargo|dtc') {
+        foreach ($p in $installed) {
+            if ($p -match '(?i)fargo|dtc') {
+                $targetPrinter = $p
+                break
+            }
+        }
+    } elseif ($requested -match '(?i)magicard') {
+        foreach ($p in $installed) {
+            if ($p -match '(?i)magicard') {
+                $targetPrinter = $p
+                break
+            }
         }
     }
 }
+
+# 4. Any card printer installed
 if (-not $targetPrinter) {
     foreach ($p in $installed) {
-        if ($p -like "*Zebra*") {
+        if ($p -match '(?i)evolis|zebra|fargo|magicard|zenius|primacy|zc\d+|dtc') {
             $targetPrinter = $p
             break
         }
     }
 }
+
+# 5. System default printer as last resort
 if (-not $targetPrinter) {
     $targetPrinter = [System.Drawing.Printing.PrinterSettings]::new().PrinterName
 }
@@ -114,7 +145,16 @@ foreach ($filePath in $cardFiles) {
     $doc.PrinterSettings.PrinterName = $targetPrinter
 
     if (-not $doc.PrinterSettings.IsValid) {
-        throw "Printer '$targetPrinter' is not valid or offline."
+        throw "Printer '$targetPrinter' is not valid, offline, or disconnected."
+    }
+
+    # CRITICAL: Dynamically bind CR80 Paper Size if driver supports it (e.g. Evolis Primacy, Zebra ZC300)
+    $cr80Size = $doc.PrinterSettings.PaperSizes | Where-Object { 
+        $_.PaperName -like "*CR80*" -or $_.PaperName -like "*CR-80*" -or $_.PaperName -like "*ISO*" -or ($_.Width -ge 210 -and $_.Width -le 220 -and $_.Height -ge 330 -and $_.Height -le 345)
+    } | Select-Object -First 1
+
+    if ($cr80Size) {
+        $doc.DefaultPageSettings.PaperSize = $cr80Size
     }
 
     # CRITICAL: Force single-sided (Simplex) printing to prevent 2-sided flip
@@ -126,6 +166,7 @@ foreach ($filePath in $cardFiles) {
     $doc.DefaultPageSettings.Landscape = $false
 
     # CRITICAL: Bypass driver printable area margins to start exactly at physical edge (0,0)
+    $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
     $doc.OriginAtMargins = $false
 
     $img = [System.Drawing.Image]::FromFile($filePath)

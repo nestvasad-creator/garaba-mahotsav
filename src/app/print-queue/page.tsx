@@ -267,19 +267,50 @@ export default function PrintQueuePage() {
     }
   };
 
+  // Printer State: Dynamically loaded from /api/printers
+  interface DetectedPrinterItem {
+    name: string;
+    isDefault: boolean;
+    isCardPrinter: boolean;
+    driverName?: string;
+  }
+
+  const [availablePrinters, setAvailablePrinters] = useState<DetectedPrinterItem[]>([]);
+  const [selectedPrinter, setSelectedPrinter] = useState<string>('Evolis Primacy 2');
+  const [customPrinterName, setCustomPrinterName] = useState<string>('');
+
+  const fetchPrinters = async () => {
+    try {
+      const res = await fetch('/api/printers');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.printers && data.printers.length > 0) {
+          setAvailablePrinters(data.printers);
+          // Prefer default card printer or first card printer
+          const defaultCard = data.printers.find((p: any) => p.isCardPrinter && p.isDefault);
+          const firstCard = data.printers.find((p: any) => p.isCardPrinter);
+          const defaultPrinter = data.printers.find((p: any) => p.isDefault);
+          const initial = defaultCard?.name || firstCard?.name || defaultPrinter?.name || data.printers[0].name;
+          if (initial) {
+            setSelectedPrinter(initial);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load printers:', e);
+    }
+  };
+
   useEffect(() => {
     async function init() {
       const sess = await getCurrentUserSession();
       setCurrentRoleCode(sess?.roleCode);
       setLoadingAuth(false);
+      fetchPrinters();
       await fetchQueue();
     }
     init();
   }, []);
-
-  // Printer Selector State (Zebra ZC300 Card Printer defaulted as primary connected hardware)
-  const [selectedPrinter, setSelectedPrinter] = useState<string>('Zebra ZC300 USB Card Printer');
-  const [customPrinterName, setCustomPrinterName] = useState<string>('');
 
   const activePrinterIdentifier =
     selectedPrinter === 'CUSTOM' && customPrinterName.trim()
@@ -297,7 +328,14 @@ export default function PrintQueuePage() {
         setFeedbackMessage({ text: res.error || 'Failed to dispatch print job.', error: true });
       } else {
         setFeedbackMessage({ text: `Card dispatched and sent to printer ${targetPrinter}!` });
-        await fetchQueue();
+        // OPTIMISTIC UPDATE: Instantly mark card as printed locally
+        setQueue((prev) =>
+          prev.map((c) =>
+            c.cardId === cardId
+              ? { ...c, status: 'PRINTED', printCount: (c.printCount || 0) + 1 }
+              : c
+          )
+        );
         setTimeout(() => setFeedbackMessage(null), 4000);
       }
     } catch (err: any) {
@@ -310,14 +348,17 @@ export default function PrintQueuePage() {
   const handleDirectPrintRow = async (job: PrintQueueItem) => {
     setActionInProgressId(job.cardId);
     setDirectPrintingJob(job);
-    setFeedbackMessage({ text: `Opening print dialog for ${job.cardNumber}...` });
+    setFeedbackMessage({ text: `Sending ${job.cardNumber} to ${activePrinterIdentifier}...` });
 
     // Allow DOM 250ms to mount the staging card element
     setTimeout(async () => {
       const el = document.getElementById('cr80-staging-card');
       if (el) {
         try {
-          await printCardDirectly(el);
+          const res = await printCardDirectly(el, activePrinterIdentifier);
+          if (res.usedSilent) {
+            setFeedbackMessage({ text: `Card ${job.cardNumber} sent to ${activePrinterIdentifier}!` });
+          }
         } catch (e: any) {
           console.warn('Physical print error:', e);
         }
@@ -330,7 +371,6 @@ export default function PrintQueuePage() {
     }, 250);
   };
 
-
   const handleRevertToQueue = async (cardId: string) => {
     setActionInProgressId(cardId);
     setFeedbackMessage(null);
@@ -338,7 +378,14 @@ export default function PrintQueuePage() {
       const res = await revertCardToQueue(cardId);
       if (res.success) {
         setFeedbackMessage({ text: res.message || 'Card returned to print queue.' });
-        await fetchQueue();
+        // OPTIMISTIC UPDATE
+        setQueue((prev) =>
+          prev.map((c) =>
+            c.cardId === cardId
+              ? { ...c, status: 'QUEUED', printCount: Math.max(0, (c.printCount || 1) - 1) }
+              : c
+          )
+        );
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({ text: res.error || 'Failed to revert card.', error: true });
@@ -366,7 +413,21 @@ export default function PrintQueuePage() {
         setFeedbackMessage({
           text: res.message || `Card status updated to ${targetStatus}!`,
         });
-        await fetchQueue();
+        // OPTIMISTIC UPDATE
+        setQueue((prev) =>
+          prev.map((c) =>
+            c.cardId === cardId
+              ? {
+                  ...c,
+                  status: targetStatus,
+                  printCount:
+                    targetStatus === 'PRINTED'
+                      ? (c.printCount || 0) + 1
+                      : Math.max(0, (c.printCount || 1) - 1),
+                }
+              : c
+          )
+        );
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({
@@ -385,6 +446,7 @@ export default function PrintQueuePage() {
     if (selectedCardIds.size === 0) return;
     setBulkStatusUpdating(true);
     setFeedbackMessage(null);
+    const targetSet = new Set(selectedCardIds);
     try {
       const cardIds = Array.from(selectedCardIds);
       const res = await batchManualSetCardPrintStatus(
@@ -396,8 +458,22 @@ export default function PrintQueuePage() {
         setFeedbackMessage({
           text: `Successfully updated ${res.count} card(s) to ${targetStatus}!`,
         });
+        // OPTIMISTIC UPDATE
+        setQueue((prev) =>
+          prev.map((c) =>
+            targetSet.has(c.cardId)
+              ? {
+                  ...c,
+                  status: targetStatus,
+                  printCount:
+                    targetStatus === 'PRINTED'
+                      ? (c.printCount || 0) + 1
+                      : Math.max(0, (c.printCount || 1) - 1),
+                }
+              : c
+          )
+        );
         setSelectedCardIds(new Set());
-        await fetchQueue();
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({
@@ -528,6 +604,7 @@ export default function PrintQueuePage() {
 
     // 3. Send all captured cards to the physical printer via multi-page CR80 job
     let usedSilent = false;
+    let batchError: string | undefined = undefined;
     if (capturedUrls.length > 0 && !abortBatchRef.current) {
       setBatchProgress((prev) => ({
         ...prev,
@@ -538,7 +615,9 @@ export default function PrintQueuePage() {
       try {
         const printResult = await printBatchCardsDirectly(capturedUrls, activePrinterIdentifier);
         usedSilent = printResult.usedSilent;
+        batchError = printResult.error;
       } catch (printErr: any) {
+        batchError = printErr.message;
         console.warn('Physical batch print invocation error:', printErr);
       }
     }
@@ -550,8 +629,10 @@ export default function PrintQueuePage() {
       ...prev,
       isProcessing: false,
       stage: 'confirming',
-      statusText: usedSilent
-        ? `${succeeded} card(s) sent silently to ${activePrinterIdentifier} (no dialog). Verify printed badges below.`
+      statusText: batchError
+        ? `Printer Alert: ${batchError}`
+        : usedSilent
+        ? `${succeeded} card(s) sent directly to ${activePrinterIdentifier} (no dialog). Verify printed badges below.`
         : `Print dialog opened for ${succeeded} cards. Verify printed badges below.`,
       percent: 100,
       capturedCardIds,
@@ -600,9 +681,17 @@ export default function PrintQueuePage() {
 
     if (printedIds.length > 0) {
       await batchDispatchPrint(printedIds, activePrinterIdentifier);
+      // OPTIMISTIC UPDATE: Update cards to PRINTED locally immediately
+      const printedSet = new Set(printedIds);
+      setQueue((prev) =>
+        prev.map((c) =>
+          printedSet.has(c.cardId)
+            ? { ...c, status: 'PRINTED', printCount: (c.printCount || 0) + 1 }
+            : c
+        )
+      );
     }
 
-    await fetchQueue();
     setSelectedCardIds(new Set());
     handleCloseBatchModal();
 
@@ -929,12 +1018,30 @@ export default function PrintQueuePage() {
                 onChange={(e) => setSelectedPrinter(e.target.value)}
                 className="text-xs font-semibold bg-purple-50/70 border border-purple-300 rounded-xl px-3 py-1.5 text-purple-950 focus:bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none cursor-pointer shadow-xs"
               >
-                <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer — Connected / Default</option>
-                <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
-                <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
-                <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>
-                <option value="EPSON-L8050-PVC">Epson L8050 PVC Card Tray</option>
-                <option value="SYSTEM-DEFAULT-PRINTER">System Default / Browser Print</option>
+                {availablePrinters.length > 0 ? (
+                  <>
+                    <optgroup label="Detected Card Printers">
+                      {availablePrinters.filter((p) => p.isCardPrinter).map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name} {p.isDefault ? '— Windows Default' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Other Windows Printers">
+                      {availablePrinters.filter((p) => !p.isCardPrinter).map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.name} {p.isDefault ? '— Windows Default' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                ) : (
+                  <>
+                    <option value="Evolis Primacy 2">Evolis Primacy 2 (Connected)</option>
+                    <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer</option>
+                  </>
+                )}
+                <option value="SYSTEM-DEFAULT-PRINTER">System Default / Browser Print Dialog</option>
                 <option value="CUSTOM">Custom Network / USB Printer...</option>
               </select>
 
@@ -1219,12 +1326,30 @@ export default function PrintQueuePage() {
                   onChange={(e) => setSelectedPrinter(e.target.value)}
                   className="text-xs font-semibold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:ring-2 focus:ring-purple-500 focus:outline-none"
                 >
-                  <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer — Connected / Default</option>
-                  <option value="FARGO-DTC1250e-USB01">HID Fargo DTC1250e (USB 01)</option>
-                  <option value="EVOLIS-ZENIUS-01">Evolis Zenius / Primacy (LAN)</option>
-                  <option value="MAGICARD-300-USB">Magicard 300 Duo (USB 02)</option>
-                  <option value="EPSON-L8050-PVC">Epson L8050 PVC Card Tray</option>
-                  <option value="SYSTEM-DEFAULT-PRINTER">System Default / Browser Print</option>
+                  {availablePrinters.length > 0 ? (
+                    <>
+                      <optgroup label="Detected Card Printers">
+                        {availablePrinters.filter((p) => p.isCardPrinter).map((p) => (
+                          <option key={p.name} value={p.name}>
+                            {p.name} {p.isDefault ? '— Windows Default' : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Other Windows Printers">
+                        {availablePrinters.filter((p) => !p.isCardPrinter).map((p) => (
+                          <option key={p.name} value={p.name}>
+                            {p.name} {p.isDefault ? '— Windows Default' : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Evolis Primacy 2">Evolis Primacy 2 (Connected)</option>
+                      <option value="Zebra ZC300 USB Card Printer">Zebra ZC300 USB Card Printer</option>
+                    </>
+                  )}
+                  <option value="SYSTEM-DEFAULT-PRINTER">System Default / Browser Print Dialog</option>
                   <option value="CUSTOM">Custom Network / USB Printer...</option>
                 </select>
               </div>

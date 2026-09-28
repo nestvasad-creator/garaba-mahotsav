@@ -239,7 +239,16 @@ export async function printCardDirectly(
     });
   }
 
-  // 2. Open system print dialog via isolated iframe
+  // 2. Try silent direct printing via Windows print spooler first
+  if (printerName && printerName !== 'SYSTEM-DEFAULT-PRINTER') {
+    const silentResult = await silentPrintCards([dataUrl], printerName);
+    if (silentResult.success) {
+      return { usedSilent: true };
+    }
+    console.warn(`[CR80Print] Silent print failed (${silentResult.error}), falling back to browser dialog...`);
+  }
+
+  // 3. Fallback: Open system print dialog via isolated iframe
   const existingIframe = document.getElementById('cr80-isolated-print-frame');
   if (existingIframe) {
     try { existingIframe.remove(); } catch (_) {}
@@ -339,11 +348,11 @@ export async function printCardDirectly(
 export async function printBatchCardsDirectly(
   cardDataUrls: string[],
   printerName?: string
-): Promise<{ usedSilent: boolean }> {
+): Promise<{ usedSilent: boolean; error?: string }> {
   if (cardDataUrls.length === 0) return { usedSilent: false };
 
   // 1. Try silent print via server API route (no browser dialog)
-  if (printerName) {
+  if (printerName && printerName !== 'SYSTEM-DEFAULT-PRINTER') {
     const silentResult = await silentPrintCards(cardDataUrls, printerName);
     if (silentResult.success) {
       console.info(
@@ -352,8 +361,12 @@ export async function printBatchCardsDirectly(
       return { usedSilent: true };
     }
     console.warn(
-      `[CR80Print] Silent batch print failed (${silentResult.error}), falling back to dialog for ${cardDataUrls.length} card(s)...`
+      `[CR80Print] Silent batch print failed: ${silentResult.error}`
     );
+    return {
+      usedSilent: false,
+      error: silentResult.error || `Printer '${printerName}' is offline or unavailable.`,
+    };
   }
 
   // 2. Fallback: iframe multi-page print (shows system dialog once)
