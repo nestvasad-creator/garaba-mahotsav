@@ -25,6 +25,7 @@ import { RoleAccessGate } from '@/components/auth/RoleAccessGate';
 import { getCurrentUserSession } from '@/lib/auth/actions';
 import {
   getPrintQueue,
+  getPrintQueuePaginated,
   dispatchPrint,
   batchDispatchPrint,
   requestCardReprint,
@@ -201,10 +202,15 @@ export default function PrintQueuePage() {
   const [currentRoleCode, setCurrentRoleCode] = useState<string | undefined>(undefined);
   const [loadingAuth, setLoadingAuth] = useState(true);
 
-  // Live Queue State
+  // Live Queue State (contains only current page records, e.g. max 20)
   const [queue, setQueue] = useState<PrintQueueItem[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'QUEUED' | 'PRINTED'>('QUEUED');
+
+  // Exact counters for tab badges
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [queuedCount, setQueuedCount] = useState<number>(0);
+  const [printedCount, setPrintedCount] = useState<number>(0);
 
   // Pagination State (Minimum 20 per page)
   const [page, setPage] = useState<number>(1);
@@ -255,16 +261,47 @@ export default function PrintQueuePage() {
   const [bulkStatusUpdating, setBulkStatusUpdating] = useState<boolean>(false);
   const abortBatchRef = React.useRef(false);
 
-  const fetchQueue = async () => {
+  const fetchQueue = async (
+    targetPage = page,
+    targetPageSize = pageSize,
+    targetStatus = filterStatus
+  ) => {
     setLoadingQueue(true);
     try {
-      const data = await getPrintQueue();
-      setQueue(data);
+      const res = await getPrintQueuePaginated({
+        page: targetPage,
+        pageSize: targetPageSize,
+        status: targetStatus,
+      });
+      setQueue(res.items);
+      setTotalCount(res.totalCount);
+      setQueuedCount(res.queuedCount);
+      setPrintedCount(res.printedCount);
     } catch (err) {
       console.error(err);
     } finally {
       setLoadingQueue(false);
     }
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    setSelectedCardIds(new Set());
+    fetchQueue(newPage, pageSize, filterStatus);
+  };
+
+  const handlePageSizeChange = (newPageSize: PageSizeOption) => {
+    setPageSize(newPageSize);
+    setPage(1);
+    setSelectedCardIds(new Set());
+    fetchQueue(1, newPageSize, filterStatus);
+  };
+
+  const handleStatusFilterChange = (newStatus: 'ALL' | 'QUEUED' | 'PRINTED') => {
+    setFilterStatus(newStatus);
+    setPage(1);
+    setSelectedCardIds(new Set());
+    fetchQueue(1, pageSize, newStatus);
   };
 
   // Printer State: Dynamically loaded from /api/printers
@@ -777,21 +814,19 @@ export default function PrintQueuePage() {
     }
   };
 
-  const filteredQueue = queue.filter((j) => {
-    if (filterStatus === 'ALL') return true;
-    return j.status === filterStatus;
-  });
+  const activeTotalCount =
+    filterStatus === 'QUEUED'
+      ? queuedCount
+      : filterStatus === 'PRINTED'
+      ? printedCount
+      : totalCount;
 
-  const queuedCount = queue.filter((j) => j.status === 'QUEUED').length;
-  const printedCount = queue.filter((j) => j.status === 'PRINTED').length;
-  const totalReprints = queue.reduce((acc, j) => acc + j.reprintCount, 0);
+  const totalReprints = queue.reduce((acc, j) => acc + (j.reprintCount || 0), 0);
 
-  // Pagination calculations (Minimum 20 items per page)
-  const totalPages = Math.max(1, Math.ceil(filteredQueue.length / pageSize));
+  // Pagination calculations from server-side exact counts
+  const totalPages = Math.max(1, Math.ceil(activeTotalCount / pageSize));
   const safeCurrentPage = Math.min(Math.max(1, page), totalPages);
-  const startIndex = (safeCurrentPage - 1) * pageSize;
-  const endIndex = startIndex + pageSize;
-  const currentPageCards = filteredQueue.slice(startIndex, endIndex);
+  const currentPageCards = queue;
 
   // Single-page Select All state
   const isAllCurrentPageSelected =
@@ -849,7 +884,7 @@ export default function PrintQueuePage() {
 
           <div className="flex items-center space-x-3">
             <button
-              onClick={fetchQueue}
+              onClick={() => fetchQueue()}
               disabled={loadingQueue}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs disabled:opacity-50"
             >
@@ -928,23 +963,17 @@ export default function PrintQueuePage() {
             {/* Filter Tabs */}
             <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={() => {
-                  setFilterStatus('ALL');
-                  setPage(1);
-                }}
+                onClick={() => handleStatusFilterChange('ALL')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                   filterStatus === 'ALL'
                     ? 'bg-slate-900 text-white shadow-xs'
                     : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
-                All Badges ({queue.length})
+                All Badges ({totalCount})
               </button>
               <button
-                onClick={() => {
-                  setFilterStatus('QUEUED');
-                  setPage(1);
-                }}
+                onClick={() => handleStatusFilterChange('QUEUED')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                   filterStatus === 'QUEUED'
                     ? 'bg-purple-600 text-white shadow-xs'
@@ -954,10 +983,7 @@ export default function PrintQueuePage() {
                 Queued ({queuedCount})
               </button>
               <button
-                onClick={() => {
-                  setFilterStatus('PRINTED');
-                  setPage(1);
-                }}
+                onClick={() => handleStatusFilterChange('PRINTED')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                   filterStatus === 'PRINTED'
                     ? 'bg-emerald-600 text-white shadow-xs'
@@ -1106,7 +1132,7 @@ export default function PrintQueuePage() {
                         </div>
                       </td>
                     </tr>
-                  ) : filteredQueue.length === 0 ? (
+                  ) : currentPageCards.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-12 text-center text-slate-400">
                         No cards found in this filter status.
@@ -1251,13 +1277,10 @@ export default function PrintQueuePage() {
             <PrintQueuePaginationBar
               page={safeCurrentPage}
               totalPages={totalPages}
-              totalCount={filteredQueue.length}
+              totalCount={activeTotalCount}
               pageSize={pageSize}
-              onPage={setPage}
-              onPageSize={(s) => {
-                setPageSize(s);
-                setPage(1);
-              }}
+              onPage={handlePageChange}
+              onPageSize={handlePageSizeChange}
             />
           </div>
         </main>
