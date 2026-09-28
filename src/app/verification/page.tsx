@@ -15,12 +15,17 @@ import {
   Receipt,
   MapPin,
   Printer,
+  RefreshCw,
+  Layers,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { RoleAccessGate } from '@/components/auth/RoleAccessGate';
 import { getCurrentUserSession } from '@/lib/auth/actions';
 import {
   getPendingVerificationQueue,
   verifyRegistrationAction,
+  batchVerifyRegistrationAction,
   VerificationItem,
 } from '@/lib/verification/actions';
 
@@ -36,6 +41,13 @@ export default function VerificationQueuePage() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [submittingAction, setSubmittingAction] = useState(false);
+
+  // Batch Verification State
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchActionType, setBatchActionType] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [batchRemarks, setBatchRemarks] = useState('');
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
 
   const fetchQueue = async () => {
     setLoadingQueue(true);
@@ -86,9 +98,11 @@ export default function VerificationQueuePage() {
     setActionError(null);
     setActionSuccess(null);
 
+    const targetId = selectedReg.id;
+
     try {
       const res = await verifyRegistrationAction({
-        registrationId: selectedReg.id,
+        registrationId: targetId,
         action,
         remarks: feedbackRemarks.trim(),
       });
@@ -101,13 +115,103 @@ export default function VerificationQueuePage() {
 
       setActionSuccess(res.message || 'Verification updated successfully!');
       setFeedbackRemarks('');
-      await fetchQueue();
+
+      // OPTIMISTIC UPDATE: Instantly remove approved/rejected item from local queue
+      setQueue((prevQueue) => {
+        const nextQueue = prevQueue.filter((item) => item.id !== targetId);
+        setSelectedReg((curr) => {
+          if (curr?.id === targetId) {
+            return nextQueue.length > 0 ? nextQueue[0] : null;
+          }
+          return curr;
+        });
+        return nextQueue;
+      });
+
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(targetId);
+        return next;
+      });
+
       setTimeout(() => setActionSuccess(null), 5000);
     } catch (err: any) {
       setActionError(err.message || 'An unexpected error occurred during verification.');
     } finally {
       setSubmittingAction(false);
     }
+  };
+
+  const handleConfirmBatchAction = async () => {
+    if (selectedIds.size === 0) return;
+
+    if (batchActionType === 'REJECT' && !batchRemarks.trim()) {
+      setActionError('Rejection remarks are mandatory when rejecting registrations in batch.');
+      return;
+    }
+
+    setBatchSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    const targetIds = Array.from(selectedIds);
+
+    try {
+      const res = await batchVerifyRegistrationAction({
+        registrationIds: targetIds,
+        action: batchActionType,
+        remarks: batchRemarks.trim() || undefined,
+      });
+
+      if (!res.success) {
+        setActionError(res.error || 'Failed to execute batch verification.');
+        setBatchSubmitting(false);
+        return;
+      }
+
+      // OPTIMISTIC UPDATE: Instantly remove all batch processed items from local queue
+      setQueue((prevQueue) => {
+        const targetSet = new Set(targetIds);
+        const nextQueue = prevQueue.filter((item) => !targetSet.has(item.id));
+        setSelectedReg((curr) => {
+          if (curr && targetSet.has(curr.id)) {
+            return nextQueue.length > 0 ? nextQueue[0] : null;
+          }
+          return curr || (nextQueue.length > 0 ? nextQueue[0] : null);
+        });
+        return nextQueue;
+      });
+
+      setSelectedIds(new Set());
+      setBatchModalOpen(false);
+      setBatchRemarks('');
+      setActionSuccess(res.message || `Successfully processed ${res.count} registrations!`);
+      setTimeout(() => setActionSuccess(null), 6000);
+    } catch (err: any) {
+      setActionError(err.message || 'An unexpected error occurred during batch verification.');
+    } finally {
+      setBatchSubmitting(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === queue.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(queue.map((q) => q.id)));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
 
   if (loadingAuth) {
@@ -174,12 +278,77 @@ export default function VerificationQueuePage() {
         {/* Left Column: Verification Queue */}
         <div className="lg:col-span-4 space-y-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-900 mb-1">
-              Pending Queue
-            </h2>
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-sm font-bold text-slate-900">
+                Pending Queue
+              </h2>
+              <button
+                onClick={fetchQueue}
+                disabled={loadingQueue}
+                className="text-xs text-slate-500 hover:text-slate-800 p-1 rounded-lg hover:bg-slate-100 transition disabled:opacity-50"
+                title="Refresh Queue"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingQueue ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
             <p className="text-xs text-slate-500 mb-3">
               {queue.length} records awaiting verifier review
             </p>
+
+            {/* Batch Selection Toolbar */}
+            {queue.length > 0 && (
+              <div className="mb-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={queue.length > 0 && selectedIds.size === queue.length}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                    />
+                    <span>Select All ({queue.length})</span>
+                  </label>
+                  {selectedIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds(new Set())}
+                      className="text-[11px] text-slate-500 hover:text-slate-800 font-medium underline"
+                    >
+                      Clear ({selectedIds.size})
+                    </button>
+                  )}
+                </div>
+
+                {selectedIds.size > 0 && (
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-200/80">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBatchActionType('APPROVE');
+                        setBatchRemarks('');
+                        setBatchModalOpen(true);
+                      }}
+                      className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Batch Approve ({selectedIds.size})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBatchActionType('REJECT');
+                        setBatchRemarks('');
+                        setBatchModalOpen(true);
+                      }}
+                      className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition"
+                    >
+                      <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                      Reject
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {loadingQueue ? (
               <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
@@ -202,58 +371,81 @@ export default function VerificationQueuePage() {
               </div>
             ) : (
               <div className="space-y-2.5 max-h-[calc(100vh-280px)] overflow-y-auto pr-1">
-                {queue.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => setSelectedReg(item)}
-                    className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                      selectedReg?.id === item.id
-                        ? 'border-emerald-600 ring-2 ring-emerald-100 bg-emerald-50/40'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold text-blue-600">
-                        {item.regNo}
-                      </span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
-                        item.status === 'CORRECTION_REQUIRED'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {item.status}
-                      </span>
-                    </div>
+                {queue.map((item) => {
+                  const isSelected = selectedIds.has(item.id);
+                  const isCurrent = selectedReg?.id === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedReg(item)}
+                      className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
+                        isCurrent
+                          ? 'border-emerald-600 ring-2 ring-emerald-100 bg-emerald-50/40'
+                          : isSelected
+                          ? 'border-emerald-300 bg-emerald-50/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <div
+                        className="pt-0.5"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelectOne(item.id);
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 cursor-pointer"
+                        />
+                      </div>
 
-                    <div className="mt-1.5">
-                      <div className="text-sm font-bold text-slate-900">
-                        {item.nameEn}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs font-bold text-blue-600">
+                            {item.regNo}
+                          </span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                            item.status === 'CORRECTION_REQUIRED'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </div>
+
+                        <div className="mt-1">
+                          <div className="text-sm font-bold text-slate-900 truncate">
+                            {item.nameEn}
+                          </div>
+                        </div>
+
+                        <div className="mt-1.5 text-[11px] text-slate-500 flex items-center justify-between">
+                          <span>Mo: {item.mobile}</span>
+                          <span className="font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded text-[10px]">
+                            {item.categoryName || 'Participant'}
+                          </span>
+                        </div>
+
+                        {(item.physicalFormNumber || item.receiptNumber) && (
+                          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                            {item.physicalFormNumber && (
+                              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                Form #{item.physicalFormNumber}
+                              </span>
+                            )}
+                            {item.receiptNumber && (
+                              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                                Rec #{item.receiptNumber}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    <div className="mt-2 text-[11px] text-slate-500 flex items-center justify-between">
-                      <span>Mobile: {item.mobile}</span>
-                      <span className="font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded text-[10px]">
-                        {item.categoryName || 'Participant'}
-                      </span>
-                    </div>
-
-                    {(item.physicalFormNumber || item.receiptNumber) && (
-                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                        {item.physicalFormNumber && (
-                          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                            Form #{item.physicalFormNumber}
-                          </span>
-                        )}
-                        {item.receiptNumber && (
-                          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
-                            Rec #{item.receiptNumber}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -561,6 +753,98 @@ export default function VerificationQueuePage() {
           )}
         </div>
       </div>
+
+      {/* Batch Action Confirmation Modal */}
+      {batchModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  batchActionType === 'APPROVE'
+                    ? 'bg-emerald-100 text-emerald-600'
+                    : 'bg-rose-100 text-rose-600'
+                }`}
+              >
+                {batchActionType === 'APPROVE' ? (
+                  <CheckCircle className="w-6 h-6" />
+                ) : (
+                  <XCircle className="w-6 h-6" />
+                )}
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  {batchActionType === 'APPROVE'
+                    ? `Batch Approve (${selectedIds.size}) Registrations`
+                    : `Batch Reject (${selectedIds.size}) Registrations`}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {batchActionType === 'APPROVE'
+                    ? 'Approve selected registrations and send them to the print queue.'
+                    : 'Reject selected registrations.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {batchActionType === 'APPROVE'
+                  ? 'Audit / Approval Remarks (Optional)'
+                  : 'Rejection Remarks (Mandatory)'}
+              </label>
+              <textarea
+                rows={3}
+                value={batchRemarks}
+                onChange={(e) => setBatchRemarks(e.target.value)}
+                placeholder={
+                  batchActionType === 'APPROVE'
+                    ? 'e.g., Bulk verified identity documents...'
+                    : 'e.g., Incomplete documentation or mismatched photo...'
+                }
+                className="w-full text-xs rounded-xl border border-slate-300 p-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setBatchModalOpen(false)}
+                disabled={batchSubmitting}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmBatchAction}
+                disabled={batchSubmitting || (batchActionType === 'REJECT' && !batchRemarks.trim())}
+                className={`px-5 py-2 text-xs font-bold text-white rounded-xl shadow transition disabled:opacity-50 flex items-center gap-1.5 ${
+                  batchActionType === 'APPROVE'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {batchSubmitting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Processing {selectedIds.size}...
+                  </>
+                ) : batchActionType === 'APPROVE' ? (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    Confirm Approval ({selectedIds.size})
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-4 h-4" />
+                    Confirm Rejection ({selectedIds.size})
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </RoleAccessGate>
   );

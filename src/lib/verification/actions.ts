@@ -82,13 +82,54 @@ export async function getPendingVerificationQueue(
       .in('registration_id', regIds);
 
     const docsByReg = new Map<string, any[]>();
+    const photoPaths: string[] = [];
+    const docPaths: string[] = [];
+
     for (const d of docs || []) {
       const arr = docsByReg.get(d.registration_id) || [];
       arr.push(d);
       docsByReg.set(d.registration_id, arr);
+
+      if (d.file_path) {
+        if (d.doc_type === 'PHOTOGRAPH') {
+          photoPaths.push(d.file_path);
+        } else {
+          docPaths.push(d.file_path);
+        }
+      }
     }
 
-    // 3. Generate ephemeral signed URLs (valid 300s) for private photos and proofs
+    // 3. Batch generate ephemeral signed URLs in parallel (2 batch requests instead of N sequential requests)
+    const signedUrlMap = new Map<string, string>();
+    try {
+      const [photosRes, docsRes] = await Promise.all([
+        photoPaths.length > 0
+          ? adminClient.storage.from('event-photos').createSignedUrls(photoPaths, 600)
+          : Promise.resolve({ data: [] as any[] }),
+        docPaths.length > 0
+          ? adminClient.storage.from('event-identity-documents').createSignedUrls(docPaths, 600)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      if (photosRes.data) {
+        for (const item of photosRes.data) {
+          if (item?.path && item?.signedUrl) {
+            signedUrlMap.set(item.path, item.signedUrl);
+          }
+        }
+      }
+      if (docsRes.data) {
+        for (const item of docsRes.data) {
+          if (item?.path && item?.signedUrl) {
+            signedUrlMap.set(item.path, item.signedUrl);
+          }
+        }
+      }
+    } catch (signErr) {
+      console.warn('Batch createSignedUrls warning:', signErr);
+    }
+
+    // 4. Assemble queue items
     const result: VerificationItem[] = [];
 
     for (const r of records) {
@@ -107,25 +148,14 @@ export async function getPendingVerificationQueue(
       }> = [];
 
       for (const d of regDocs) {
-        let signedUrl: string | null = null;
+        const signedUrl = (d.file_path && signedUrlMap.get(d.file_path)) || null;
+
         if (d.doc_type === 'PHOTOGRAPH') {
-          const { data: pSign } = await adminClient.storage
-            .from('event-photos')
-            .createSignedUrl(d.file_path, 300);
-          photoUrl = pSign?.signedUrl || null;
-          signedUrl = photoUrl;
+          photoUrl = signedUrl;
         } else if (d.doc_type === 'APPLICATION_FORM') {
-          const { data: fSign } = await adminClient.storage
-            .from('event-identity-documents')
-            .createSignedUrl(d.file_path, 300);
-          formUrl = fSign?.signedUrl || null;
-          signedUrl = formUrl;
+          formUrl = signedUrl;
         } else {
-          const { data: dSign } = await adminClient.storage
-            .from('event-identity-documents')
-            .createSignedUrl(d.file_path, 300);
-          proofUrl = dSign?.signedUrl || null;
-          signedUrl = proofUrl;
+          proofUrl = signedUrl;
           proofType = d.original_filename || 'Aadhaar Card';
         }
 
@@ -406,5 +436,217 @@ export async function verifyRegistrationAction(params: {
   } catch (err: any) {
     console.error('verifyRegistrationAction error:', err);
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Performs batch verification action (APPROVE or REJECT) on multiple registrations.
+ */
+export async function batchVerifyRegistrationAction(params: {
+  registrationIds: string[];
+  action: 'APPROVE' | 'REJECT';
+  remarks?: string;
+}): Promise<{
+  success: boolean;
+  count: number;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const session = await getCurrentUserSession();
+    if (!session) {
+      return { success: false, count: 0, error: 'Authentication required. Please sign in.' };
+    }
+
+    if (!canPerformAction(session.roleCode, 'VERIFY_DOCUMENT')) {
+      return {
+        success: false,
+        count: 0,
+        error: `Unauthorized: Role '${session.roleCode}' cannot verify registrations. Only VERIFIER or EVENT_ADMIN is permitted.`,
+      };
+    }
+
+    if (params.action === 'REJECT') {
+      if (session.roleCode === 'DATA_ENTRY_OPERATOR' || !canPerformAction(session.roleCode, 'REJECT_REGISTRATION')) {
+        return {
+          success: false,
+          count: 0,
+          error: 'Unauthorized: Data Entry Operators are not permitted to reject registrations.',
+        };
+      }
+      if (!params.remarks || !params.remarks.trim()) {
+        return {
+          success: false,
+          count: 0,
+          error: 'Rejection remarks are mandatory when rejecting registrations.',
+        };
+      }
+    }
+
+    if (!params.registrationIds || params.registrationIds.length === 0) {
+      return { success: true, count: 0, message: 'No registrations selected.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Fetch all target registration records
+    const { data: records, error: fetchErr } = await adminClient
+      .from('registrations')
+      .select('*')
+      .in('id', params.registrationIds);
+
+    if (fetchErr || !records || records.length === 0) {
+      return { success: false, count: 0, error: 'No matching registration records found.' };
+    }
+
+    const validIds = records.map((r) => r.id);
+    const newStatus = params.action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    const docStatus = params.action === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
+
+    // 2. Batch update registrations
+    const { error: regUpdateErr } = await adminClient
+      .from('registrations')
+      .update({
+        status: newStatus,
+        verified_by: session.id,
+        verified_at: now,
+        verification_remarks: params.remarks?.trim() || null,
+        updated_at: now,
+      })
+      .in('id', validIds);
+
+    if (regUpdateErr) {
+      return { success: false, count: 0, error: regUpdateErr.message };
+    }
+
+    // 3. Batch update associated documents
+    await adminClient
+      .from('documents')
+      .update({
+        status: docStatus,
+        verified_by: session.id,
+        verified_at: now,
+        remarks: params.remarks?.trim() || null,
+      })
+      .in('registration_id', validIds);
+
+    // 4. If Rejected, revoke any active card records
+    if (params.action === 'REJECT') {
+      await adminClient
+        .from('id_cards')
+        .update({
+          status: 'REVOKED',
+          is_active: false,
+          updated_at: now,
+        })
+        .in('registration_id', validIds);
+    }
+
+    // 5. If Approved, bulk generate ID card records
+    if (params.action === 'APPROVE') {
+      const eventId = records[0]?.event_id || DEFAULT_EVENT_ID;
+
+      // Pre-fetch all card themes for the event
+      const { data: themes } = await adminClient
+        .from('card_themes')
+        .select('id, event_id, card_type_id, gender_rule')
+        .eq('event_id', eventId);
+
+      // Pre-fetch photo documents for all registrations
+      const { data: photos } = await adminClient
+        .from('documents')
+        .select('registration_id, file_path')
+        .in('registration_id', validIds)
+        .eq('doc_type', 'PHOTOGRAPH');
+
+      const photoMap = new Map<string, string>();
+      for (const p of photos || []) {
+        if (p.registration_id && p.file_path) {
+          photoMap.set(p.registration_id, p.file_path);
+        }
+      }
+
+      const idCardUpserts: any[] = [];
+
+      for (const reg of records) {
+        const cardNum = reg.registration_number.replace('NEST-2026-', 'NEST-CARD-');
+        const qrToken = `tok_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
+
+        let themeId: string | null = null;
+        if (themes && themes.length > 0) {
+          const matchGender = themes.find(
+            (t) => t.card_type_id === reg.category_id && t.gender_rule === reg.gender
+          );
+          const matchCat = themes.find((t) => t.card_type_id === reg.category_id);
+          themeId = matchGender?.id || matchCat?.id || themes[0]?.id || null;
+        }
+
+        if (themeId) {
+          idCardUpserts.push({
+            event_id: reg.event_id,
+            registration_id: reg.id,
+            card_type_id: reg.category_id,
+            theme_id: themeId,
+            card_number: cardNum,
+            qr_code_hash: qrToken,
+            status: 'APPROVED',
+            is_active: true,
+            recipient_name_en: reg.full_name_en,
+            recipient_name_gu: reg.full_name_gu || reg.full_name_en,
+            recipient_mobile: reg.mobile,
+            recipient_photo_path: photoMap.get(reg.id) || null,
+            approved_by: session.id,
+            approved_at: now,
+            metadata: {
+              physical_form_number: reg.physical_form_number,
+              receipt_number: (reg as any).receipt_number || null,
+              gender: reg.gender,
+              dob: reg.dob,
+              address: reg.address_en,
+              city: reg.city,
+              pincode: reg.pincode,
+            },
+          });
+        }
+      }
+
+      if (idCardUpserts.length > 0) {
+        await adminClient.from('id_cards').upsert(idCardUpserts, {
+          onConflict: 'event_id,card_number',
+        });
+      }
+    }
+
+    // 6. Bulk Insert Audit Logs
+    const auditEntries = records.map((reg) => ({
+      event_id: reg.event_id,
+      user_id: session.id,
+      action: `VERIFICATION_BATCH_${params.action}`,
+      resource_type: 'REGISTRATION',
+      resource_id: reg.id,
+      details: {
+        registration_number: reg.registration_number,
+        action: params.action,
+        remarks: params.remarks || null,
+        batch_size: validIds.length,
+        verifier_email: session.email,
+        verifier_role: session.roleCode,
+      },
+    }));
+
+    await adminClient.from('audit_logs').insert(auditEntries);
+
+    return {
+      success: true,
+      count: validIds.length,
+      message:
+        params.action === 'APPROVE'
+          ? `Successfully batch-approved ${validIds.length} registration(s) and queued physical ID cards for printing!`
+          : `Successfully batch-rejected ${validIds.length} registration(s).`,
+    };
+  } catch (err: any) {
+    console.error('batchVerifyRegistrationAction error:', err);
+    return { success: false, count: 0, error: err.message };
   }
 }
