@@ -609,10 +609,60 @@ export async function getRegistrationById(id: string) {
       .eq('registration_id', id)
       .maybeSingle();
 
+    // Fetch creator and verifier auth users for username & email resolution
+    let creatorUsername: string | null = null;
+    let creatorFullName: string = reg.creator?.full_name_en || (reg.created_by ? 'Data Entry Operator' : 'System / Import');
+
+    let verifierUsername: string | null = null;
+    let verifierFullName: string = reg.verifier?.full_name_en || (reg.verified_by ? 'Verifier' : '—');
+
+    const authLookups: Promise<any>[] = [];
+    if (reg.created_by) {
+      authLookups.push(
+        adminClient.auth.admin.getUserById(reg.created_by).catch(() => ({ data: null }))
+      );
+    } else {
+      authLookups.push(Promise.resolve({ data: null }));
+    }
+
+    if (reg.verified_by) {
+      authLookups.push(
+        adminClient.auth.admin.getUserById(reg.verified_by).catch(() => ({ data: null }))
+      );
+    } else {
+      authLookups.push(Promise.resolve({ data: null }));
+    }
+
+    const [creatorAuthRes, verifierAuthRes] = await Promise.all(authLookups);
+
+    if (creatorAuthRes?.data?.user) {
+      const u = creatorAuthRes.data.user;
+      const email = u.email || '';
+      creatorUsername = email.includes('@') ? email.split('@')[0] : email;
+      if (!reg.creator?.full_name_en && u.user_metadata?.full_name) {
+        creatorFullName = u.user_metadata.full_name;
+      }
+    } else if (!reg.created_by) {
+      creatorUsername = 'system';
+    }
+
+    if (verifierAuthRes?.data?.user) {
+      const u = verifierAuthRes.data.user;
+      const email = u.email || '';
+      verifierUsername = email.includes('@') ? email.split('@')[0] : email;
+      if (!reg.verifier?.full_name_en && u.user_metadata?.full_name) {
+        verifierFullName = u.user_metadata.full_name;
+      }
+    }
+
     return {
       success: true,
       registration: {
         ...reg,
+        creator_full_name: creatorFullName,
+        creator_username: creatorUsername,
+        verifier_full_name: verifierFullName,
+        verifier_username: verifierUsername,
         id_card: card || null,
       },
       documents: enrichedDocs,

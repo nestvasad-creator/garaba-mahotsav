@@ -85,6 +85,8 @@ function generateCsv(rows: ReportRow[]): string {
     'Card No',
     'Full Name (EN)',
     'Full Name (GU)',
+    'Entered By (Name)',
+    'Entered By (Username)',
     'Category',
     'Gender',
     'Mobile',
@@ -108,6 +110,8 @@ function generateCsv(rows: ReportRow[]): string {
       escapeCell(r.cardNumber ?? '—'),
       escapeCell(r.holderNameEn),
       escapeCell(r.holderNameGu),
+      escapeCell(r.createdByFullName ?? 'System / Import'),
+      escapeCell(r.createdByUsername ? `@${r.createdByUsername}` : '—'),
       escapeCell(r.categoryEn),
       escapeCell(r.gender),
       escapeCell(r.mobile),
@@ -893,6 +897,9 @@ export default function ReportsPage() {
                   >
                     Name <SortIcon k="holderNameEn" />
                   </th>
+                  <th className="py-3 px-4 whitespace-nowrap">
+                    Entered By
+                  </th>
                   <th
                     className="py-3 px-4 cursor-pointer hover:text-blue-600 select-none"
                     onClick={() => handleSort('categoryEn')}
@@ -921,7 +928,7 @@ export default function ReportsPage() {
                 {loading ? (
                   Array.from({ length: pageSize > 25 ? 8 : 5 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 10 }).map((_, j) => (
+                      {Array.from({ length: 11 }).map((_, j) => (
                         <td key={j} className="py-3 px-4">
                           <div className="h-3 bg-slate-100 rounded animate-pulse" />
                         </td>
@@ -930,7 +937,7 @@ export default function ReportsPage() {
                   ))
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-slate-400 text-sm">
+                    <td colSpan={11} className="py-12 text-center text-slate-400 text-sm">
                       <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                       No records found matching current filters.
                     </td>
@@ -938,8 +945,14 @@ export default function ReportsPage() {
                 ) : (
                   rows.map((row) => (
                     <tr key={row.registrationNumber} className="hover:bg-slate-50/75 transition">
-                      <td className="py-3 px-4 font-mono font-bold text-blue-600 whitespace-nowrap">
-                        {row.registrationNumber}
+                      <td className="py-3 px-4 font-mono font-bold whitespace-nowrap">
+                        <Link
+                          href={`/registrations/${row.id}`}
+                          className="text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                          title="View registration details"
+                        >
+                          {row.registrationNumber}
+                        </Link>
                       </td>
                       <td className="py-3 px-4 font-mono whitespace-nowrap">
                         {row.receiptNumber ? (
@@ -953,6 +966,18 @@ export default function ReportsPage() {
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900">{row.holderNameEn}</div>
                         <div className="text-[10px] text-slate-400">{row.holderNameGu}</div>
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="font-semibold text-slate-800">
+                          {row.createdByFullName || '—'}
+                        </div>
+                        {row.createdByUsername ? (
+                          <div className="text-[10px] text-purple-700 font-mono">
+                            @{row.createdByUsername}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-400">System</div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-slate-700 font-medium whitespace-nowrap">
                         {row.categoryEn}

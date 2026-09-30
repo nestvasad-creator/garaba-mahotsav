@@ -86,6 +86,7 @@ export const ROLE_DEFINITIONS: Record<SystemRoleCode, RoleMetadata> = {
       '/',
       '/registrations',
       '/registrations/new',
+      '/reports',
     ],
   },
   SPECIAL_ID_OPERATOR: {
@@ -101,6 +102,7 @@ export const ROLE_DEFINITIONS: Record<SystemRoleCode, RoleMetadata> = {
       '/registrations',
       '/verification',
       '/print-queue',
+      '/reports',
     ],
   },
   PRINTER_OPERATOR: {
@@ -115,6 +117,7 @@ export const ROLE_DEFINITIONS: Record<SystemRoleCode, RoleMetadata> = {
       '/print-queue',
       '/registrations',
       '/verification',
+      '/reports',
     ],
   },
   SECURITY: {
@@ -127,6 +130,7 @@ export const ROLE_DEFINITIONS: Record<SystemRoleCode, RoleMetadata> = {
     allowedPaths: [
       '/',
       '/scan',
+      '/reports',
     ],
   },
 };
@@ -217,7 +221,15 @@ export function canPerformAction(
         'PRINTER_OPERATOR',
       ].includes(roleCode);
     case 'VIEW_REPORTS':
-      return ['VERIFIER', 'EVENT_ADMIN', 'SUPER_ADMIN'].includes(roleCode);
+      return [
+        'VERIFIER',
+        'EVENT_ADMIN',
+        'SUPER_ADMIN',
+        'DATA_ENTRY_OPERATOR',
+        'PRINTER_OPERATOR',
+        'SPECIAL_ID_OPERATOR',
+        'SECURITY',
+      ].includes(roleCode);
     default:
       return false;
   }

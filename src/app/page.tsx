@@ -106,12 +106,20 @@ export default async function Home() {
     {
       title: 'Reports & Analytics',
       titleGu: 'અહેવાલો અને એક્સેલ એક્સપોર્ટ',
-      description: 'Date-wise, category-wise charts, UTF-8 BOM Excel export, and Noto Sans Gujarati PDF.',
+      description: 'Date-wise, category-wise charts, UTF-8 BOM Excel export, and entry operator ledger.',
       href: '/reports',
       icon: FileSpreadsheet,
-      badge: 'Verifiers & Admins',
+      badge: 'All Operators',
       color: 'bg-teal-50 text-teal-700 border-teal-200',
-      allowedRoles: ['VERIFIER', 'EVENT_ADMIN', 'SUPER_ADMIN'],
+      allowedRoles: [
+        'SUPER_ADMIN',
+        'EVENT_ADMIN',
+        'VERIFIER',
+        'DATA_ENTRY_OPERATOR',
+        'PRINTER_OPERATOR',
+        'SPECIAL_ID_OPERATOR',
+        'SECURITY',
+      ],
     },
     {
       title: 'RBAC & Audit Trail',

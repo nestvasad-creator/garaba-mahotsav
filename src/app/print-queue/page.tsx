@@ -268,11 +268,30 @@ export default function PrintQueuePage() {
   ) => {
     setLoadingQueue(true);
     try {
-      const res = await getPrintQueuePaginated({
+      let res = await getPrintQueuePaginated({
         page: targetPage,
         pageSize: targetPageSize,
         status: targetStatus,
       });
+
+      // Auto-adjust page if current page exceeds total pages after items change status
+      const activeTotal =
+        targetStatus === 'QUEUED'
+          ? res.queuedCount
+          : targetStatus === 'PRINTED'
+          ? res.printedCount
+          : res.totalCount;
+      const maxPages = Math.max(1, Math.ceil(activeTotal / targetPageSize));
+
+      if (targetPage > maxPages) {
+        setPage(maxPages);
+        res = await getPrintQueuePaginated({
+          page: maxPages,
+          pageSize: targetPageSize,
+          status: targetStatus,
+        });
+      }
+
       setQueue(res.items);
       setTotalCount(res.totalCount);
       setQueuedCount(res.queuedCount);
@@ -365,14 +384,7 @@ export default function PrintQueuePage() {
         setFeedbackMessage({ text: res.error || 'Failed to dispatch print job.', error: true });
       } else {
         setFeedbackMessage({ text: `Card dispatched and sent to printer ${targetPrinter}!` });
-        // OPTIMISTIC UPDATE: Instantly mark card as printed locally
-        setQueue((prev) =>
-          prev.map((c) =>
-            c.cardId === cardId
-              ? { ...c, status: 'PRINTED', printCount: (c.printCount || 0) + 1 }
-              : c
-          )
-        );
+        await fetchQueue();
         setTimeout(() => setFeedbackMessage(null), 4000);
       }
     } catch (err: any) {
@@ -415,14 +427,7 @@ export default function PrintQueuePage() {
       const res = await revertCardToQueue(cardId);
       if (res.success) {
         setFeedbackMessage({ text: res.message || 'Card returned to print queue.' });
-        // OPTIMISTIC UPDATE
-        setQueue((prev) =>
-          prev.map((c) =>
-            c.cardId === cardId
-              ? { ...c, status: 'QUEUED', printCount: Math.max(0, (c.printCount || 1) - 1) }
-              : c
-          )
-        );
+        await fetchQueue();
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({ text: res.error || 'Failed to revert card.', error: true });
@@ -450,21 +455,7 @@ export default function PrintQueuePage() {
         setFeedbackMessage({
           text: res.message || `Card status updated to ${targetStatus}!`,
         });
-        // OPTIMISTIC UPDATE
-        setQueue((prev) =>
-          prev.map((c) =>
-            c.cardId === cardId
-              ? {
-                  ...c,
-                  status: targetStatus,
-                  printCount:
-                    targetStatus === 'PRINTED'
-                      ? (c.printCount || 0) + 1
-                      : Math.max(0, (c.printCount || 1) - 1),
-                }
-              : c
-          )
-        );
+        await fetchQueue();
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({
@@ -483,7 +474,6 @@ export default function PrintQueuePage() {
     if (selectedCardIds.size === 0) return;
     setBulkStatusUpdating(true);
     setFeedbackMessage(null);
-    const targetSet = new Set(selectedCardIds);
     try {
       const cardIds = Array.from(selectedCardIds);
       const res = await batchManualSetCardPrintStatus(
@@ -495,22 +485,8 @@ export default function PrintQueuePage() {
         setFeedbackMessage({
           text: `Successfully updated ${res.count} card(s) to ${targetStatus}!`,
         });
-        // OPTIMISTIC UPDATE
-        setQueue((prev) =>
-          prev.map((c) =>
-            targetSet.has(c.cardId)
-              ? {
-                  ...c,
-                  status: targetStatus,
-                  printCount:
-                    targetStatus === 'PRINTED'
-                      ? (c.printCount || 0) + 1
-                      : Math.max(0, (c.printCount || 1) - 1),
-                }
-              : c
-          )
-        );
         setSelectedCardIds(new Set());
+        await fetchQueue();
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
         setFeedbackMessage({
@@ -718,19 +694,13 @@ export default function PrintQueuePage() {
 
     if (printedIds.length > 0) {
       await batchDispatchPrint(printedIds, activePrinterIdentifier);
-      // OPTIMISTIC UPDATE: Update cards to PRINTED locally immediately
-      const printedSet = new Set(printedIds);
-      setQueue((prev) =>
-        prev.map((c) =>
-          printedSet.has(c.cardId)
-            ? { ...c, status: 'PRINTED', printCount: (c.printCount || 0) + 1 }
-            : c
-        )
-      );
     }
 
     setSelectedCardIds(new Set());
     handleCloseBatchModal();
+
+    // Refresh list of records and live counts from server
+    await fetchQueue();
 
     if (printedIds.length === 0) {
       setFeedbackMessage({

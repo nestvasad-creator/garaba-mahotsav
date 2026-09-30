@@ -9,11 +9,14 @@ const DEFAULT_EVENT_ID = '00000000-0000-0000-0000-000000000010';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ReportRow {
+  id: string;
   registrationNumber: string;
   receiptNumber: string | null;
   cardNumber: string | null;
   holderNameEn: string;
   holderNameGu: string;
+  createdByFullName: string | null;
+  createdByUsername: string | null;
   categoryEn: string;
   categoryCode: string;
   gender: string;
@@ -76,6 +79,60 @@ function requireAuth() {
   return getCurrentUserSession();
 }
 
+interface UserLookupInfo {
+  username: string;
+  fullName: string;
+  email: string;
+}
+
+let cachedUserMap: Map<string, UserLookupInfo> | null = null;
+let cachedUserMapTimestamp = 0;
+const USER_CACHE_TTL_MS = 60 * 1000;
+
+export async function getUserLookupMap(): Promise<Map<string, UserLookupInfo>> {
+  const now = Date.now();
+  if (cachedUserMap && now - cachedUserMapTimestamp < USER_CACHE_TTL_MS) {
+    return cachedUserMap;
+  }
+
+  const supabase = createAdminClient();
+  const map = new Map<string, UserLookupInfo>();
+
+  try {
+    const [{ data: authUsers }, { data: profs }] = await Promise.all([
+      supabase.auth.admin.listUsers({ perPage: 1000 }),
+      supabase.from('user_profiles').select('id, full_name_en, full_name_gu, mobile'),
+    ]);
+
+    const profMap = new Map((profs || []).map((p) => [p.id, p]));
+
+    for (const u of authUsers?.users || []) {
+      const prof = profMap.get(u.id);
+      const email = u.email || '';
+      const username = email ? (email.includes('@') ? email.split('@')[0] : email) : '—';
+      const fullName = prof?.full_name_en || u.user_metadata?.full_name || username;
+      map.set(u.id, { username, fullName, email });
+    }
+
+    for (const p of profs || []) {
+      if (!map.has(p.id)) {
+        map.set(p.id, {
+          username: p.mobile || 'operator',
+          fullName: p.full_name_en || 'Operator',
+          email: '',
+        });
+      }
+    }
+
+    cachedUserMap = map;
+    cachedUserMapTimestamp = now;
+  } catch (err) {
+    console.error('Error fetching user lookup map:', err);
+  }
+
+  return map;
+}
+
 // ─── getReportRows (Paginated with Server-Side Search & Sorting) ───────────────
 
 /**
@@ -132,6 +189,7 @@ export async function getReportRows(
       city,
       status,
       created_at,
+      created_by,
       verified_at,
       category_id,
       card_types!category_id ( code, name_en )
@@ -202,13 +260,16 @@ export async function getReportRows(
     return { rows: [], totalCount: totalCount ?? 0, totalPages: 0 };
   }
 
-  // 3. Fetch id_cards for only this slice's registrations
+  // 3. Fetch id_cards and user lookup map in parallel
   const regIds = regs.map((r: any) => r.id);
-  const { data: cards, error: cardError } = await supabase
-    .from('id_cards')
-    .select('registration_id, card_number, status, metadata')
-    .in('registration_id', regIds)
-    .eq('event_id', eventId);
+  const [{ data: cards, error: cardError }, userMap] = await Promise.all([
+    supabase
+      .from('id_cards')
+      .select('registration_id, card_number, status, metadata')
+      .in('registration_id', regIds)
+      .eq('event_id', eventId),
+    getUserLookupMap(),
+  ]);
 
   if (cardError) {
     console.error('[Reports] id_cards fetch error:', cardError);
@@ -226,12 +287,19 @@ export async function getReportRows(
     const card = cardMap.get(r.id) ?? null;
     const ct = r.card_types as any;
     const meta = card?.metadata ?? {};
+    const creator = r.created_by ? userMap.get(r.created_by) : null;
+    const createdByFullName = creator?.fullName || (r.created_by ? 'Data Entry Operator' : 'System / Import');
+    const createdByUsername = creator?.username || (r.created_by ? null : 'system');
+
     return {
+      id: r.id,
       registrationNumber: r.registration_number,
       receiptNumber: r.receipt_number || card?.metadata?.receipt_number || null,
       cardNumber: card?.card_number ?? null,
       holderNameEn: r.full_name_en,
       holderNameGu: r.full_name_gu,
+      createdByFullName,
+      createdByUsername,
       categoryEn: ct?.name_en ?? '',
       categoryCode: ct?.code ?? '',
       gender: r.gender,
@@ -305,6 +373,7 @@ export async function exportAllReportRows(
       city,
       status,
       created_at,
+      created_by,
       verified_at,
       category_id,
       card_types!category_id ( code, name_en )
@@ -348,36 +417,48 @@ export async function exportAllReportRows(
     return { rows: [], totalCount: 0 };
   }
 
-  // Fetch all associated id_cards in chunks of 500
+  // Fetch all associated id_cards in chunks of 500 and user lookup map
   const regIds = regs.map((r: any) => r.id);
   const cardMap = new Map<string, any>();
   const chunkSize = 500;
 
-  for (let i = 0; i < regIds.length; i += chunkSize) {
-    const chunk = regIds.slice(i, i + chunkSize);
-    const { data: cards } = await supabase
-      .from('id_cards')
-      .select('registration_id, card_number, status, metadata')
-      .in('registration_id', chunk)
-      .eq('event_id', eventId);
+  const [_, userMap] = await Promise.all([
+    (async () => {
+      for (let i = 0; i < regIds.length; i += chunkSize) {
+        const chunk = regIds.slice(i, i + chunkSize);
+        const { data: cards } = await supabase
+          .from('id_cards')
+          .select('registration_id, card_number, status, metadata')
+          .in('registration_id', chunk)
+          .eq('event_id', eventId);
 
-    for (const c of cards ?? []) {
-      if (!cardMap.has(c.registration_id)) {
-        cardMap.set(c.registration_id, c);
+        for (const c of cards ?? []) {
+          if (!cardMap.has(c.registration_id)) {
+            cardMap.set(c.registration_id, c);
+          }
+        }
       }
-    }
-  }
+    })(),
+    getUserLookupMap(),
+  ]);
 
   const rows: ReportRow[] = regs.map((r: any) => {
     const card = cardMap.get(r.id) ?? null;
     const ct = r.card_types as any;
     const meta = card?.metadata ?? {};
+    const creator = r.created_by ? userMap.get(r.created_by) : null;
+    const createdByFullName = creator?.fullName || (r.created_by ? 'Data Entry Operator' : 'System / Import');
+    const createdByUsername = creator?.username || (r.created_by ? null : 'system');
+
     return {
+      id: r.id,
       registrationNumber: r.registration_number,
       receiptNumber: r.receipt_number || card?.metadata?.receipt_number || null,
       cardNumber: card?.card_number ?? null,
       holderNameEn: r.full_name_en,
       holderNameGu: r.full_name_gu,
+      createdByFullName,
+      createdByUsername,
       categoryEn: ct?.name_en ?? '',
       categoryCode: ct?.code ?? '',
       gender: r.gender,

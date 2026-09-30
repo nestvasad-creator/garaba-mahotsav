@@ -565,9 +565,23 @@ export default function RegistrationDetailPage() {
               </span>
               {getStatusBadge(data.status)}
             </div>
-            <p className="text-xs text-slate-500 font-mono">
-              Reg No: <span className="font-bold text-blue-600">{data.registration_number}</span>
-            </p>
+            <div className="flex items-center gap-3 flex-wrap mt-0.5 text-xs text-slate-500">
+              <span className="font-mono">
+                Reg No: <strong className="text-blue-600">{data.registration_number}</strong>
+              </span>
+              <span className="inline-flex items-center gap-1.5 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                <User className="w-3 h-3 text-slate-500" />
+                <span className="text-slate-500">Entry by:</span>
+                <strong className="text-slate-800">
+                  {data.creator_full_name || data.creator?.full_name_en || 'Data Entry Operator'}
+                </strong>
+                {data.creator_username && (
+                  <span className="font-mono text-purple-700 font-semibold text-[11px]">
+                    (@{data.creator_username})
+                  </span>
+                )}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -833,9 +847,16 @@ export default function RegistrationDetailPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                     <div>
                       <span className="text-slate-400 block mb-0.5">Enrolled By</span>
-                      <span className="font-semibold text-slate-800">
-                        {data.creator?.full_name_en || 'Data Entry Operator'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-slate-900">
+                          {data.creator_full_name || data.creator?.full_name_en || 'Data Entry Operator'}
+                        </span>
+                        {data.creator_username && (
+                          <span className="font-mono text-[11px] bg-purple-50 text-purple-800 font-semibold px-2 py-0.5 rounded-md border border-purple-200">
+                            @{data.creator_username}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div>
@@ -847,9 +868,16 @@ export default function RegistrationDetailPage() {
 
                     <div>
                       <span className="text-slate-400 block mb-0.5">Verified By</span>
-                      <span className="font-semibold text-slate-800">
-                        {data.verifier?.full_name_en || 'Pending Verification'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-slate-900">
+                          {data.verifier_full_name || data.verifier?.full_name_en || 'Pending Verification'}
+                        </span>
+                        {data.verifier_username && (
+                          <span className="font-mono text-[11px] bg-emerald-50 text-emerald-800 font-semibold px-2 py-0.5 rounded-md border border-emerald-200">
+                            @{data.verifier_username}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div>
