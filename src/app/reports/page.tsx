@@ -971,12 +971,12 @@ export default function ReportsPage() {
                         <div className="font-semibold text-slate-800">
                           {row.createdByFullName || '—'}
                         </div>
-                        {row.createdByUsername ? (
-                          <div className="text-[10px] text-purple-700 font-mono">
+                        {row.createdByUsername && row.createdByUsername !== 'system' ? (
+                          <div className="text-[10px] text-purple-700 font-mono font-medium">
                             @{row.createdByUsername}
                           </div>
                         ) : (
-                          <div className="text-[10px] text-slate-400">System</div>
+                          <div className="text-[10px] text-slate-400">Initial Import</div>
                         )}
                       </td>
                       <td className="py-3 px-4 text-slate-700 font-medium whitespace-nowrap">

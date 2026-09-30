@@ -164,15 +164,34 @@ export async function createRegistration(
   const adminClient = createAdminClient();
   const session = await getCurrentUserSession();
 
-  // Validate session user against user_profiles
+  // Validate session user against user_profiles and auto-heal if missing
   let creatorId = session?.id || null;
-  if (creatorId) {
+  if (creatorId && session) {
     const { data: prof } = await adminClient
       .from('user_profiles')
       .select('id')
       .eq('id', creatorId)
       .maybeSingle();
-    if (!prof) creatorId = null;
+
+    if (!prof) {
+      try {
+        const fallbackPhone = session.mobile || `99${creatorId.replace(/[^0-9]/g, '').slice(0, 8).padEnd(8, '0')}`;
+        await adminClient
+          .from('user_profiles')
+          .upsert(
+            {
+              id: creatorId,
+              full_name_en: session.fullNameEn || session.email || 'Data Entry Operator',
+              full_name_gu: session.fullNameGu || null,
+              mobile: fallbackPhone,
+              is_active: true,
+            },
+            { onConflict: 'id' }
+          );
+      } catch (profErr: any) {
+        console.warn('Auto-create user_profile warning:', profErr);
+      }
+    }
   }
 
   const randomDigits = Math.floor(100000 + Math.random() * 900000);

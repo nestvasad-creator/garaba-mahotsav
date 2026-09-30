@@ -59,12 +59,34 @@ export async function getCurrentUserSession() {
 
     const adminClient = createAdminClient();
 
-    // Fetch user profile
-    const { data: profile } = await adminClient
+    // Fetch user profile (or auto-create if missing)
+    let profile = null;
+    const { data: existingProfile } = await adminClient
       .from('user_profiles')
       .select('*')
       .eq('id', session.user.id)
       .maybeSingle();
+
+    if (existingProfile) {
+      profile = existingProfile;
+    } else {
+      const fallbackPhone = session.user.user_metadata?.mobile || `99${session.user.id.replace(/[^0-9]/g, '').slice(0, 8).padEnd(8, '0')}`;
+      const { data: newProf } = await adminClient
+        .from('user_profiles')
+        .upsert(
+          {
+            id: session.user.id,
+            full_name_en: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Operator',
+            full_name_gu: session.user.user_metadata?.full_name_gu || null,
+            mobile: fallbackPhone,
+            is_active: true,
+          },
+          { onConflict: 'id' }
+        )
+        .select()
+        .maybeSingle();
+      profile = newProf;
+    }
 
     // Fetch user role
     const { data: userRole } = await adminClient

@@ -575,7 +575,7 @@ export default function RegistrationDetailPage() {
                 <strong className="text-slate-800">
                   {data.creator_full_name || data.creator?.full_name_en || 'Data Entry Operator'}
                 </strong>
-                {data.creator_username && (
+                {data.creator_username && data.creator_username !== 'system' && (
                   <span className="font-mono text-purple-700 font-semibold text-[11px]">
                     (@{data.creator_username})
                   </span>
@@ -851,7 +851,7 @@ export default function RegistrationDetailPage() {
                         <span className="font-semibold text-slate-900">
                           {data.creator_full_name || data.creator?.full_name_en || 'Data Entry Operator'}
                         </span>
-                        {data.creator_username && (
+                        {data.creator_username && data.creator_username !== 'system' && (
                           <span className="font-mono text-[11px] bg-purple-50 text-purple-800 font-semibold px-2 py-0.5 rounded-md border border-purple-200">
                             @{data.creator_username}
                           </span>
