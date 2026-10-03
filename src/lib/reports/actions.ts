@@ -406,14 +406,22 @@ export async function exportAllReportRows(
     );
   }
 
-  const { data: regs, error: regError } = await regQuery;
-
-  if (regError) {
-    console.error('[Reports] export registrations fetch error:', regError);
-    return { rows: [], totalCount: 0, error: regError.message };
+  const regs: any[] = [];
+  const exportBatchSize = 1000;
+  let from = 0;
+  while (true) {
+    const { data: chunk, error: regError } = await regQuery.range(from, from + exportBatchSize - 1);
+    if (regError) {
+      console.error('[Reports] export registrations fetch error:', regError);
+      return { rows: [], totalCount: 0, error: regError.message };
+    }
+    if (!chunk || chunk.length === 0) break;
+    regs.push(...chunk);
+    if (chunk.length < exportBatchSize) break;
+    from += exportBatchSize;
   }
 
-  if (!regs || regs.length === 0) {
+  if (regs.length === 0) {
     return { rows: [], totalCount: 0 };
   }
 
@@ -507,23 +515,56 @@ export async function getReportSummary(
     // Stored procedure not installed or errored — proceed to seamless fallback
   }
 
-  // 2. Fallback: Optimized direct batch queries
-  const [regsRes, cardsRes] = await Promise.all([
-    supabase
-      .from('registrations')
-      .select('id, status, gender, created_at, card_types!category_id(code, name_en)')
-      .eq('event_id', eventId),
-    supabase
-      .from('id_cards')
-      .select('status, metadata, card_types!card_type_id(is_registered)')
-      .eq('event_id', eventId),
-  ]);
+  // 2. Fallback: Direct batch queries with automatic range pagination to bypass PostgREST 1000-row limit
+  const fetchAllRegistrations = async () => {
+    const list: any[] = [];
+    const batchSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('registrations')
+        .select('id, status, gender, created_at, card_types!category_id(code, name_en)')
+        .eq('event_id', eventId)
+        .range(from, from + batchSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      list.push(...data);
+      if (data.length < batchSize) break;
+      from += batchSize;
+    }
+    return list;
+  };
 
-  if (regsRes.error) return { summary: null, error: regsRes.error.message };
-  if (cardsRes.error) return { summary: null, error: cardsRes.error.message };
+  const fetchAllCards = async () => {
+    const list: any[] = [];
+    const batchSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('id_cards')
+        .select('status, metadata, card_types!card_type_id(is_registered)')
+        .eq('event_id', eventId)
+        .range(from, from + batchSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      list.push(...data);
+      if (data.length < batchSize) break;
+      from += batchSize;
+    }
+    return list;
+  };
 
-  const allRegs = regsRes.data ?? [];
-  const allCards = cardsRes.data ?? [];
+  let allRegs: any[] = [];
+  let allCards: any[] = [];
+
+  try {
+    const [regs, cards] = await Promise.all([fetchAllRegistrations(), fetchAllCards()]);
+    allRegs = regs;
+    allCards = cards;
+  } catch (err: any) {
+    console.error('[Reports] Error fetching summary batches:', err);
+    return { summary: null, error: err?.message || 'Failed to fetch summary' };
+  }
 
   const statusCount = (s: string) => allRegs.filter((r: any) => r.status === s).length;
 

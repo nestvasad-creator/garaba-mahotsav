@@ -28,90 +28,69 @@ RETURNS JSONB AS $$
 DECLARE
   v_summary JSONB;
 BEGIN
-  WITH reg_stats AS (
-    SELECT
-      COUNT(*) AS total_reg,
-      COUNT(*) FILTER (WHERE status = 'APPROVED') AS approved,
-      COUNT(*) FILTER (WHERE status = 'UNDER_VERIFICATION') AS under_verification,
-      COUNT(*) FILTER (WHERE status = 'CORRECTION_REQUIRED') AS correction_required,
-      COUNT(*) FILTER (WHERE status = 'REJECTED') AS rejected,
-      COUNT(*) FILTER (WHERE status = 'DRAFT') AS draft,
-      COUNT(*) FILTER (WHERE gender = 'MALE') AS male_count,
-      COUNT(*) FILTER (WHERE gender = 'FEMALE') AS female_count,
-      COUNT(*) FILTER (WHERE gender NOT IN ('MALE', 'FEMALE') OR gender IS NULL) AS other_count
-    FROM registrations
-    WHERE event_id = p_event_id
-  ),
-  cat_breakdown AS (
-    SELECT COALESCE(
-      jsonb_agg(
+  SELECT jsonb_build_object(
+    'totalRegistrations', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id),
+    'approved', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND status = 'APPROVED'),
+    'underVerification', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND status = 'UNDER_VERIFICATION'),
+    'correctionRequired', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND status = 'CORRECTION_REQUIRED'),
+    'rejected', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND status = 'REJECTED'),
+    'draft', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND status = 'DRAFT'),
+    'genderBreakdown', jsonb_build_object(
+      'MALE', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND gender = 'MALE'),
+      'FEMALE', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND gender = 'FEMALE'),
+      'OTHER', (SELECT COUNT(*) FROM registrations WHERE event_id = p_event_id AND (gender NOT IN ('MALE', 'FEMALE') OR gender IS NULL))
+    ),
+    'categoryBreakdown', COALESCE((
+      SELECT jsonb_agg(
         jsonb_build_object(
           'code', ct.code,
           'nameEn', ct.name_en,
-          'count', count(r.id)
-        ) ORDER BY count(r.id) DESC
-      ),
-      '[]'::jsonb
-    ) AS cat_data
-    FROM card_types ct
-    LEFT JOIN registrations r ON r.category_id = ct.id AND r.event_id = p_event_id
-    WHERE ct.event_id = p_event_id
-    GROUP BY ct.code, ct.name_en
-    HAVING count(r.id) > 0
-  ),
-  daily_trend AS (
-    SELECT COALESCE(
-      jsonb_agg(
+          'count', sub.cnt
+        ) ORDER BY sub.cnt DESC
+      )
+      FROM (
+        SELECT category_id, COUNT(*) AS cnt
+        FROM registrations
+        WHERE event_id = p_event_id
+        GROUP BY category_id
+      ) sub
+      JOIN card_types ct ON ct.id = sub.category_id
+    ), '[]'::jsonb),
+    'dailyRegistrations', COALESCE((
+      SELECT jsonb_agg(
         jsonb_build_object(
           'date', d.dt::text,
-          'count', count(r.id)
+          'count', COALESCE(sub.cnt, 0)
         ) ORDER BY d.dt ASC
-      ),
-      '[]'::jsonb
-    ) AS daily_data
-    FROM (
-      SELECT generate_series(
-        CURRENT_DATE - INTERVAL '13 days',
-        CURRENT_DATE,
-        INTERVAL '1 day'
-      )::date AS dt
-    ) d
-    LEFT JOIN registrations r ON r.created_at::date = d.dt AND r.event_id = p_event_id
-    GROUP BY d.dt
-  ),
-  card_stats AS (
-    SELECT
-      COUNT(*) FILTER (WHERE ic.status = 'PRINTED') AS cards_printed,
-      COUNT(*) FILTER (WHERE ic.status = 'PRINT_QUEUED') AS cards_queued,
-      COALESCE(SUM(NULLIF(ic.metadata->>'reprint_count', '')::integer), 0) AS reprint_count,
-      COUNT(*) FILTER (WHERE ct.is_registered = false) AS special_cards
-    FROM id_cards ic
-    LEFT JOIN card_types ct ON ic.card_type_id = ct.id
-    WHERE ic.event_id = p_event_id
-  )
-  SELECT jsonb_build_object(
-    'totalRegistrations', COALESCE(rs.total_reg, 0),
-    'approved', COALESCE(rs.approved, 0),
-    'underVerification', COALESCE(rs.under_verification, 0),
-    'correctionRequired', COALESCE(rs.correction_required, 0),
-    'rejected', COALESCE(rs.rejected, 0),
-    'draft', COALESCE(rs.draft, 0),
-    'genderBreakdown', jsonb_build_object(
-      'MALE', COALESCE(rs.male_count, 0),
-      'FEMALE', COALESCE(rs.female_count, 0),
-      'OTHER', COALESCE(rs.other_count, 0)
-    ),
-    'categoryBreakdown', COALESCE(cb.cat_data, '[]'::jsonb),
-    'dailyRegistrations', COALESCE(dt.daily_data, '[]'::jsonb),
-    'cardsPrinted', COALESCE(cs.cards_printed, 0),
-    'cardsQueued', COALESCE(cs.cards_queued, 0),
-    'totalReprintCount', COALESCE(cs.reprint_count, 0),
-    'specialCards', COALESCE(cs.special_cards, 0)
-  ) INTO v_summary
-  FROM reg_stats rs
-  CROSS JOIN cat_breakdown cb
-  CROSS JOIN daily_trend dt
-  CROSS JOIN card_stats cs;
+      )
+      FROM (
+        SELECT generate_series(
+          CURRENT_DATE - INTERVAL '13 days',
+          CURRENT_DATE,
+          INTERVAL '1 day'
+        )::date AS dt
+      ) d
+      LEFT JOIN (
+        SELECT created_at::date AS dt, COUNT(*) AS cnt
+        FROM registrations
+        WHERE event_id = p_event_id
+        GROUP BY created_at::date
+      ) sub ON sub.dt = d.dt
+    ), '[]'::jsonb),
+    'cardsPrinted', (SELECT COUNT(*) FROM id_cards WHERE event_id = p_event_id AND status = 'PRINTED'),
+    'cardsQueued', (SELECT COUNT(*) FROM id_cards WHERE event_id = p_event_id AND status = 'PRINT_QUEUED'),
+    'totalReprintCount', COALESCE((
+      SELECT SUM(NULLIF(metadata->>'reprint_count', '')::integer)
+      FROM id_cards
+      WHERE event_id = p_event_id
+    ), 0),
+    'specialCards', (
+      SELECT COUNT(*)
+      FROM id_cards ic
+      JOIN card_types ct ON ic.card_type_id = ct.id
+      WHERE ic.event_id = p_event_id AND ct.is_registered = false
+    )
+  ) INTO v_summary;
 
   RETURN v_summary;
 END;
