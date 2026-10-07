@@ -8,6 +8,7 @@ import { User, QrCode as QrIcon } from 'lucide-react';
 import {
   CARD_TEMPLATE_DATA_URL,
   CARD_TEMPLATE_TRANSPARENT_DATA_URL,
+  CARD_TEMPLATE_NO_LOGO_TRANSPARENT_DATA_URL,
   GUJARATI_BANNER_DATA_URL,
   NEST_LOGO_WHITE_DATA_URL,
 } from './cardTemplate';
@@ -113,6 +114,22 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     const textColor = theme?.textColor || '#ffffff';
     const accentColor = theme?.accentColor || '#F59E0B';
 
+    const catUpper = (data.categoryCode || data.categoryEn || '').toUpperCase();
+    const isSponsor = catUpper.includes('SPONSOR');
+    const isTrustee = catUpper.includes('TRUSTEE');
+    const isGuest = catUpper.includes('GUEST');
+    const isStaff = catUpper.includes('STAFF') || catUpper.includes('CREW');
+
+    const isSponsorOrTrustee = isSponsor || isTrustee;
+    // Categories with a prominent center logo (Trustee, Guest, Sponsor) should not display the top-left logo
+    const hasCenterLogo = isTrustee || isGuest || isSponsor;
+
+    // For designs featuring a center logo (Trustee, Guest, Sponsor), default to the
+    // clean transparent template without the top-left logo to avoid visual redundancy
+    const defaultTransparentTemplate = hasCenterLogo
+      ? CARD_TEMPLATE_NO_LOGO_TRANSPARENT_DATA_URL
+      : CARD_TEMPLATE_TRANSPARENT_DATA_URL;
+
     // When a custom background image is supplied, use it; otherwise check theme watermark/logo,
     // or fallback to the transparent template allowing theme.primaryColor to dynamically render
     const bgUrl =
@@ -121,15 +138,7 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
       (theme as any)?.watermark_url ||
       (theme as any)?.logoUrl ||
       (theme as any)?.logo_url ||
-      CARD_TEMPLATE_TRANSPARENT_DATA_URL;
-
-    const catUpper = (data.categoryCode || data.categoryEn || '').toUpperCase();
-    const isSponsor = catUpper.includes('SPONSOR');
-    const isTrustee = catUpper.includes('TRUSTEE');
-    const isGuest = catUpper.includes('GUEST');
-    const isStaff = catUpper.includes('STAFF') || catUpper.includes('CREW');
-
-    const isSponsorOrTrustee = isSponsor || isTrustee;
+      defaultTransparentTemplate;
 
     const shouldShowQr = data.showQr !== undefined ? data.showQr : (!isSponsorOrTrustee && !isGuest);
     const shouldShowPhoto = data.showPhoto !== undefined ? data.showPhoto : (!isSponsorOrTrustee && !isGuest && !isStaff);
@@ -273,6 +282,22 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           className
         )}
       >
+        {/* Top-Left Logo Mask: Removes/masks top-left logo for designs that feature a center logo (Trustee, Guest, Sponsor) */}
+        {hasCenterLogo && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '4.8%',
+              top: '5.8%',
+              width: '26%',
+              height: '17%',
+              backgroundColor: primaryColor,
+              zIndex: 10,
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
         {/* Receipt Number (Shown above QR code if available and QR is enabled) */}
         {displayReceiptNo && shouldShowQr && (
           <div
