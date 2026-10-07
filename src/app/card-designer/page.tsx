@@ -189,7 +189,7 @@ export default function CardDesignerPage() {
       : isStaff
       ? 'NEST-STAFF-1042'
       : 'NEST-CARD-107008',
-    qrToken: isSponsor || isTrustee || isGuest ? '' : 'tok_nest_preview_sample_2026',
+    qrToken: isSponsor || isTrustee || isGuest || isStaff ? '' : 'tok_nest_preview_sample_2026',
     holderNameEn: isSponsor
       ? 'RELIANCE INDUSTRIES LTD.'
       : isTrustee
@@ -218,8 +218,8 @@ export default function CardDesignerPage() {
       : 'East Zone / Vasad',
     eventNameEn: 'NAVRATRI MAHOTSAV 2026',
     organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
-    physicalFormNumber: isSponsor || isTrustee || isGuest ? null : '1042',
-    receiptNumber: isSponsor || isTrustee || isGuest ? null : '8593',
+    physicalFormNumber: isSponsor || isTrustee || isGuest || isStaff ? null : '1042',
+    receiptNumber: isSponsor || isTrustee || isGuest || isStaff ? null : '8593',
     backgroundTemplateUrl: activeColors.watermarkUrl || undefined,
   };
 
