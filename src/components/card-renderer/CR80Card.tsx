@@ -573,8 +573,39 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           />
         </div>
 
-        {/* 4. Right Side: Dynamic Role/Name for Participant and Staff cards */}
-        {!isSponsorOrTrustee && !isGuest && (
+        {/* 4. Right Side: Gujarati Banner for Sponsor/Trustee/Guest, or Dynamic Role/Name for Participant/Staff */}
+        {isSponsorOrTrustee || isGuest ? (
+          <div
+            style={{
+              position: 'absolute',
+              left: '79.5%',
+              top: '25.2%',
+              width: '14.5%',
+              height: '68.5%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 20,
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor: textColor,
+                WebkitMaskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                maskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                WebkitMaskPosition: 'center',
+                maskPosition: 'center',
+              }}
+            />
+          </div>
+        ) : (
           <div
             style={{
               position: 'absolute',
