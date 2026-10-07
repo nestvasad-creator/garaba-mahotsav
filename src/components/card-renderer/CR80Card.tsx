@@ -541,7 +541,41 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           </div>
         )}
 
-        {/* 3. Right Side: Gujarati Banner for Sponsor/Trustee/Guest, or Dynamic Role/Name for others */}
+        {/* 3. Left Side: Gujarati Banner for Participant / Staff cards (dynamically tinted with textColor) */}
+        {!isSponsorOrTrustee && !isGuest && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '6.0%',
+              top: '25.2%',
+              width: '14.5%',
+              height: '68.5%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10,
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor: textColor,
+                WebkitMaskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                maskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                WebkitMaskPosition: 'center',
+                maskPosition: 'center',
+              }}
+            />
+          </div>
+        )}
+
+        {/* 4. Right Side: Gujarati Banner for Sponsor/Trustee/Guest, or Dynamic Role/Name for others */}
         {isSponsorOrTrustee || isGuest ? (
           <div
             style={{
@@ -557,13 +591,19 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               pointerEvents: 'none',
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={GUJARATI_BANNER_DATA_URL}
-              alt="આદ્યાશક્તિ ગરબા મહોત્સવ, વાસદ"
-              className="w-full h-full object-contain select-none"
+            <div
               style={{
-                filter: isDarkText ? 'invert(1)' : 'none',
+                width: '100%',
+                height: '100%',
+                backgroundColor: textColor,
+                WebkitMaskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                maskImage: `url(${GUJARATI_BANNER_DATA_URL})`,
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                WebkitMaskPosition: 'center',
+                maskPosition: 'center',
               }}
             />
           </div>
@@ -607,46 +647,77 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           </div>
         )}
 
-        {/* 4. Optional Custom Category Overlay (Only shown if category is custom, e.g. GUEST, VIP, SPONSOR, etc.) */}
-        {isCustomCategory && (
-          <div
+        {/* 5. Category Badge Overlay */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '21%',
+            top: '76.0%',
+            width: '58%',
+            maxWidth: '58%',
+            height: '8.8%',
+            backgroundColor: primaryColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10,
+          }}
+          className="overflow-hidden"
+        >
+          <span
             style={{
-              position: 'absolute',
-              left: '21%',
-              top: '76.0%',
-              width: '58%',
-              maxWidth: '58%',
-              height: '8.8%',
-              backgroundColor: primaryColor,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 10,
+              width: '100%',
+              maxWidth: '100%',
+              fontSize: `${scaledCategoryFontSize}px`,
+              lineHeight: 1.15,
+              letterSpacing: '0.03em',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'clip',
+              wordBreak: 'keep-all',
+              color: textColor,
+              textShadow: isDarkText
+                ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                : '0 1px 2px rgba(0, 0, 0, 0.65)',
             }}
-            className="overflow-hidden"
+            className="font-extrabold uppercase text-center drop-shadow-sm select-none"
           >
-            <span
-              style={{
-                width: '100%',
-                maxWidth: '100%',
-                fontSize: `${scaledCategoryFontSize}px`,
-                lineHeight: 1.15,
-                letterSpacing: '0.03em',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'clip',
-                wordBreak: 'keep-all',
-                color: textColor,
-                textShadow: isDarkText
-                  ? '0 1px 2px rgba(255, 255, 255, 0.7)'
-                  : '0 1px 2px rgba(0, 0, 0, 0.65)',
-              }}
-              className="font-extrabold uppercase text-center drop-shadow-sm select-none"
-            >
-              {normalizedCategory}
-            </span>
-          </div>
-        )}
+            {normalizedCategory}
+          </span>
+        </div>
+
+        {/* 6. Dynamic Bottom Year Text inheriting textColor */}
+        <div
+          style={{
+            position: 'absolute',
+            left: '20%',
+            top: '84.8%',
+            width: '60%',
+            height: '10.5%',
+            backgroundColor: primaryColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10,
+          }}
+          className="overflow-hidden"
+        >
+          <span
+            style={{
+              fontSize: `${Math.round(18.5 * scale)}px`,
+              fontWeight: 900,
+              letterSpacing: '0.14em',
+              lineHeight: 1,
+              color: textColor,
+              textShadow: isDarkText
+                ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                : '0 1px 2px rgba(0, 0, 0, 0.65)',
+            }}
+            className="font-black font-sans uppercase tracking-widest select-none text-center"
+          >
+            {data.validTo ? (new Date(data.validTo).getFullYear() || '2026') : '2026'}
+          </span>
+        </div>
       </div>
     );
   }
