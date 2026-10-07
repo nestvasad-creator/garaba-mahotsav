@@ -34,6 +34,7 @@ export interface CardRenderData {
   categoryCode?: string;
   showQr?: boolean;
   showPhoto?: boolean;
+  designation?: string | null;
 }
 
 export interface CR80CardProps {
@@ -124,10 +125,14 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
 
     const catUpper = (data.categoryCode || data.categoryEn || '').toUpperCase();
     const isSponsor = catUpper.includes('SPONSOR');
-    const isCrew = catUpper.includes('CREW');
+    const isTrustee = catUpper.includes('TRUSTEE');
+    const isGuest = catUpper.includes('GUEST');
+    const isStaff = catUpper.includes('STAFF') || catUpper.includes('CREW');
 
-    const shouldShowQr = data.showQr !== undefined ? data.showQr : !isSponsor;
-    const shouldShowPhoto = data.showPhoto !== undefined ? data.showPhoto : (!isSponsor && !isCrew);
+    const isSponsorOrTrustee = isSponsor || isTrustee;
+
+    const shouldShowQr = data.showQr !== undefined ? data.showQr : (!isSponsorOrTrustee && !isGuest);
+    const shouldShowPhoto = data.showPhoto !== undefined ? data.showPhoto : (!isSponsorOrTrustee && !isGuest && !isStaff);
 
     // Dynamic Name calculation & responsive font sizing
     const name = (data.holderNameEn || 'PARTICIPANT NAME').trim();
@@ -145,7 +150,7 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     }
     const scaledFontSize = Math.max(9, Math.round(nameFontSize * scale * 10) / 10);
 
-    // Responsive font size for Sponsor Name in the center
+    // Responsive font size for Sponsor / Trustee Name in the center
     let sponsorNameFontSize = 16.5;
     if (name.length > 32) {
       sponsorNameFontSize = 10;
@@ -157,6 +162,30 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
       sponsorNameFontSize = 14.5;
     }
     const scaledSponsorFontSize = Math.max(9, Math.round(sponsorNameFontSize * scale));
+
+    // Dynamic Role / Category calculation for Staff (e.g. POLICE, GEB, FIRE, etc.)
+    const rawStaffRole = (
+      data.designation ||
+      data.organizationEn ||
+      data.holderNameEn ||
+      data.categoryEn ||
+      'STAFF'
+    ).trim();
+    const staffRoleName = rawStaffRole.toUpperCase();
+
+    let staffFontSize = 16.5;
+    if (staffRoleName.length > 27) {
+      staffFontSize = 10.2;
+    } else if (staffRoleName.length > 20) {
+      staffFontSize = 11.8;
+    } else if (staffRoleName.length > 15) {
+      staffFontSize = 13.5;
+    } else if (staffRoleName.length > 10) {
+      staffFontSize = 15.0;
+    } else {
+      staffFontSize = 17.5;
+    }
+    const scaledStaffFontSize = Math.max(9, Math.round(staffFontSize * scale * 10) / 10);
 
     // Normalize category: if it says "Registered Participant" (or anything containing participant), shorten to "PARTICIPANT"
     const rawCategory = (data.categoryEn || 'PARTICIPANT').trim();
@@ -347,8 +376,8 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           </div>
         )}
 
-        {/* SPONSOR SPECIFIC CENTER LAYOUT (Instead of QR Code & Photo) */}
-        {isSponsor && (
+        {/* SPONSOR & TRUSTEE SPECIFIC CENTER LAYOUT (Logo & Name in Center) */}
+        {isSponsorOrTrustee && (
           <div
             style={{
               position: 'absolute',
@@ -378,7 +407,7 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={safePhotoUrl || NEST_LOGO_WHITE_DATA_URL}
-                alt="Sponsor Logo"
+                alt={isTrustee ? 'Trustee Logo' : 'Sponsor Logo'}
                 className="w-full h-full object-contain select-none"
                 style={{
                   filter: !safePhotoUrl && isDarkText ? 'invert(1)' : 'none',
@@ -386,7 +415,7 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               />
             </div>
 
-            {/* Sponsor Name below Logo (Auto-adjusted font size to fit neatly) */}
+            {/* Name below Logo (Auto-adjusted font size to fit neatly) */}
             <div
               style={{
                 width: '100%',
@@ -410,8 +439,85 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           </div>
         )}
 
-        {/* 3. Right Side: Gujarati Banner for Sponsor, or Dynamic Participant Name for others */}
-        {isSponsor ? (
+        {/* GUEST SPECIFIC CENTER LAYOUT (Emblem only, without name) */}
+        {isGuest && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '20%',
+              width: '60%',
+              top: '25%',
+              height: '49%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 15,
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.round(112 * scale)}px`,
+                height: `${Math.round(112 * scale)}px`,
+                maxHeight: '85%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={safePhotoUrl || NEST_LOGO_WHITE_DATA_URL}
+                alt="Guest Pass Emblem"
+                className="w-full h-full object-contain select-none"
+                style={{
+                  filter: !safePhotoUrl && isDarkText ? 'invert(1)' : 'none',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* STAFF SPECIFIC LOWER-CENTER EMBLEM (Instead of photo box) */}
+        {isStaff && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '30.41%',
+              top: '52%',
+              width: '39.18%',
+              height: '24%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 15,
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.round(62 * scale)}px`,
+                height: `${Math.round(62 * scale)}px`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: 0.92,
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={safePhotoUrl || NEST_LOGO_WHITE_DATA_URL}
+                alt="Staff Emblem"
+                className="w-full h-full object-contain select-none"
+                style={{
+                  filter: !safePhotoUrl && isDarkText ? 'invert(1)' : 'none',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 3. Right Side: Gujarati Banner for Sponsor/Trustee/Guest, or Dynamic Role/Name for others */}
+        {isSponsorOrTrustee || isGuest ? (
           <div
             style={{
               position: 'absolute',
@@ -459,8 +565,8 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
                 whiteSpace: 'nowrap',
                 color: textColor,
                 fontWeight: 900,
-                letterSpacing: name.length > 20 ? '0.02em' : '0.04em',
-                fontSize: `${scaledFontSize}px`,
+                letterSpacing: (isStaff ? staffRoleName : name).length > 20 ? '0.02em' : '0.04em',
+                fontSize: `${isStaff ? scaledStaffFontSize : scaledFontSize}px`,
                 textTransform: 'uppercase',
                 textShadow: isDarkText
                   ? '0 1px 2px rgba(255, 255, 255, 0.7)'
@@ -469,9 +575,9 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
                 display: 'inline-block',
                 textAlign: 'center',
               }}
-              title={data.holderNameEn}
+              title={isStaff ? staffRoleName : data.holderNameEn}
             >
-              {name}
+              {isStaff ? staffRoleName : name}
             </div>
           </div>
         )}

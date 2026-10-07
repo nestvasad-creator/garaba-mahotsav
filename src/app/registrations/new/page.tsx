@@ -254,12 +254,20 @@ export default function NewRegistrationPage() {
   const isSponsor =
     selectedCat?.code === 'SPONSOR' ||
     selectedCat?.name_en?.toUpperCase().includes('SPONSOR');
-  const isCrew =
+  const isTrustee =
+    selectedCat?.code === 'TRUSTEE' ||
+    selectedCat?.name_en?.toUpperCase().includes('TRUSTEE');
+  const isGuest =
+    selectedCat?.code === 'GUEST' ||
+    selectedCat?.name_en?.toUpperCase().includes('GUEST');
+  const isStaff =
+    selectedCat?.code === 'STAFF' ||
     selectedCat?.code === 'CREW' ||
+    selectedCat?.name_en?.toUpperCase().includes('STAFF') ||
     selectedCat?.name_en?.toUpperCase().includes('CREW');
 
-  const requiresForm = !isSponsor;
-  const requiresPhoto = !isSponsor && !isCrew;
+  const requiresForm = !isSponsor && !isTrustee && !isGuest;
+  const requiresPhoto = !isSponsor && !isTrustee && !isGuest && !isStaff;
 
   const handleSubmit = async (e: React.FormEvent, status: 'DRAFT' | 'SUBMITTED') => {
     e.preventDefault();
@@ -840,9 +848,11 @@ export default function NewRegistrationPage() {
                     <p className="text-[11px] text-slate-500 mb-3">
                       {requiresPhoto
                         ? 'Clear portrait photo to print on physical PVC card'
-                        : isSponsor
-                        ? 'Photo is not required for Sponsor cards'
-                        : 'Photo is not required for Crew cards'}
+                        : isSponsor || isTrustee
+                        ? 'Photo is not required for Sponsor & Trustee cards'
+                        : isGuest
+                        ? 'Photo is not required for Guest passes'
+                        : 'Photo is not required for Staff cards'}
                     </p>
                   </div>
 

@@ -236,16 +236,22 @@ export async function createRegistration(
   }
 
   const isSponsor = resolvedCat?.code === 'SPONSOR' || resolvedCat?.name_en?.toUpperCase().includes('SPONSOR');
+  const isTrustee = resolvedCat?.code === 'TRUSTEE' || resolvedCat?.name_en?.toUpperCase().includes('TRUSTEE');
+  const isGuest = resolvedCat?.code === 'GUEST' || resolvedCat?.name_en?.toUpperCase().includes('GUEST');
+  const isStaff = resolvedCat?.code === 'STAFF' || resolvedCat?.code === 'CREW' || resolvedCat?.name_en?.toUpperCase().includes('STAFF') || resolvedCat?.name_en?.toUpperCase().includes('CREW');
+
+  const isFormExempt = isSponsor || isTrustee || isGuest;
   const formNo = formData.physical_form_number || (formData as any).formSerialNo || null;
 
-  if (!isSponsor && (!formNo || !formNo.trim())) {
+  if (!isFormExempt && (!formNo || !formNo.trim())) {
     return {
       success: false,
       error: 'Physical Paper Form Serial Number is mandatory.',
     };
   }
 
-  const resolvedFormNo = formNo?.trim() || (isSponsor ? `SPON-${randomDigits}` : '');
+  const formPrefix = isTrustee ? 'TRUS' : isGuest ? 'GUEST' : isStaff ? 'STAFF' : 'SPON';
+  const resolvedFormNo = formNo?.trim() || (isFormExempt ? `${formPrefix}-${randomDigits}` : '');
 
   let receiptNo = formData.receipt_number?.trim().toUpperCase() || (formData as any).receiptNo?.trim().toUpperCase() || null;
   const gender = formData.gender || 'MALE';
@@ -277,7 +283,7 @@ export async function createRegistration(
     alternate_mobile: formData.alternate_mobile?.trim() || null,
     address_en: formData.address_en?.trim() || 'As per physical form / Vasad',
     address_gu: formData.address_gu?.trim() || formData.address_en?.trim() || 'As per physical form / Vasad',
-    area_zone: formData.area_zone || (formNo ? `Form #${formNo.trim()}` : (isSponsor ? 'Sponsor Lounge' : (resolvedCat?.code === 'CREW' ? 'Production Crew' : 'East Zone / Vasad'))),
+    area_zone: formData.area_zone || (formNo ? `Form #${formNo.trim()}` : (isTrustee ? 'Trustee Lounge' : (isSponsor ? 'Sponsor Lounge' : (isGuest ? 'VIP Guest Enclosure' : (isStaff ? 'Staff / Law Enforcement' : 'East Zone / Vasad'))))),
     city: formData.city || 'Vasad',
     state: formData.state || 'Gujarat',
     pincode: formData.pincode || '388306',

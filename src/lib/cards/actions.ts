@@ -55,6 +55,7 @@ export interface PrintQueueItem {
   reprintReason?: string | null;
   receiptNumber?: string | null;
   physicalFormNumber?: string | null;
+  designation?: string | null;
   requestedAt: string;
   theme: {
     primaryColor: string;
@@ -240,6 +241,7 @@ export async function getPrintQueuePaginated(params: {
       const gender = reg?.gender || c.metadata?.gender || null;
       const receiptNumber = reg?.receipt_number || c.metadata?.receipt_number || null;
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
+      const designation = c.metadata?.designation || c.metadata?.organization || reg?.area_zone || null;
 
       return {
         id: latestJob?.id || c.id,
@@ -260,6 +262,7 @@ export async function getPrintQueuePaginated(params: {
         reprintReason: latestJob?.reprint_reason || null,
         receiptNumber,
         physicalFormNumber,
+        designation,
         requestedAt: new Date(latestJob?.created_at || c.created_at).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -482,6 +485,7 @@ export async function getPrintQueue(
       const gender = reg?.gender || c.metadata?.gender || null;
       const receiptNumber = reg?.receipt_number || c.metadata?.receipt_number || null;
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
+      const designation = c.metadata?.designation || c.metadata?.organization || reg?.area_zone || null;
 
       return {
         id: latestJob?.id || c.id,
@@ -502,6 +506,7 @@ export async function getPrintQueue(
         reprintReason: latestJob?.reprint_reason || null,
         receiptNumber,
         physicalFormNumber,
+        designation,
         requestedAt: new Date(latestJob?.created_at || c.created_at).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',

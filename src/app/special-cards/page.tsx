@@ -61,8 +61,8 @@ export default function SpecialCardsPage() {
       setCategories(cats);
       setSpecialCards(cards);
       if (cats.length > 0 && !selectedCategoryId) {
-        // Prefer CREW or SPONSOR if available
-        const defaultCat = cats.find((c) => c.code === 'CREW') || cats.find((c) => c.code === 'SPONSOR') || cats[0];
+        // Prefer GUEST, STAFF, or TRUSTEE if available
+        const defaultCat = cats.find((c) => c.code === 'GUEST') || cats.find((c) => c.code === 'STAFF') || cats.find((c) => c.code === 'TRUSTEE') || cats[0];
         setSelectedCategoryId(defaultCat.id);
       }
     } catch (err) {
@@ -96,8 +96,17 @@ export default function SpecialCardsPage() {
 
   const handleIssueCard = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCategoryId || !recipientNameEn.trim()) {
-      setFeedback({ type: 'error', message: 'Please select a category and provide the recipient name.' });
+    const selCat = categories.find((c) => c.id === selectedCategoryId);
+    const isGuestCat = selCat?.code === 'GUEST';
+    const isStaffCat = selCat?.code === 'STAFF';
+
+    let finalName = recipientNameEn.trim();
+    if (isGuestCat && !finalName) {
+      finalName = 'HONORABLE GUEST';
+    }
+
+    if (!selectedCategoryId || !finalName) {
+      setFeedback({ type: 'error', message: 'Please select a category and provide the recipient or department name.' });
       return;
     }
 
@@ -107,10 +116,10 @@ export default function SpecialCardsPage() {
     try {
       const res = await issueSpecialCard({
         cardTypeId: selectedCategoryId,
-        recipientNameEn: recipientNameEn.trim(),
-        recipientNameGu: recipientNameEn.trim(),
+        recipientNameEn: finalName,
+        recipientNameGu: finalName,
         recipientMobile: recipientMobile.trim() || undefined,
-        designation: designation.trim() || undefined,
+        designation: isStaffCat ? (designation.trim() || finalName) : (designation.trim() || undefined),
         organization: organization.trim() || undefined,
         gender,
         validTo: validDays === 'SINGLE_DAY' ? '2026-10-02T00:00:00Z' : '2026-10-13T00:00:00Z',
@@ -175,7 +184,7 @@ export default function SpecialCardsPage() {
                 Controlled Special & Non-Registered ID Cards
               </h1>
               <p className="text-xs text-slate-500">
-                Sponsor, Crew, Security, and Volunteer Passes Desk
+                Guest, Trustee, Staff, Security, and Volunteer Passes Desk
               </p>
             </div>
           </div>
@@ -373,19 +382,36 @@ export default function SpecialCardsPage() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    Dignitary / Recipient Name (English) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Shri Narendra Patel"
-                    value={recipientNameEn}
-                    onChange={(e) => setRecipientNameEn(e.target.value)}
-                    className="w-full text-xs rounded-xl border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-rose-500"
-                  />
-                </div>
+                {(() => {
+                  const selCat = categories.find((c) => c.id === selectedCategoryId);
+                  const isGuestCat = selCat?.code === 'GUEST';
+                  const isStaffCat = selCat?.code === 'STAFF';
+                  return (
+                    <div>
+                      <label className="text-xs font-semibold text-slate-700 block mb-1">
+                        {isStaffCat
+                          ? 'Department / Category Name (e.g. POLICE, GEB, FIRE) *'
+                          : isGuestCat
+                          ? 'Guest / Dignitary Name (Optional - leave empty for common badge)'
+                          : 'Dignitary / Recipient Name (English) *'}
+                      </label>
+                      <input
+                        type="text"
+                        required={!isGuestCat}
+                        placeholder={
+                          isStaffCat
+                            ? 'e.g. POLICE or GEB or FIRE SAFETY'
+                            : isGuestCat
+                            ? 'Leave empty for common Guest template, or enter name'
+                            : 'e.g. Shri Prafulbhai Patel'
+                        }
+                        value={recipientNameEn}
+                        onChange={(e) => setRecipientNameEn(e.target.value)}
+                        className="w-full text-xs rounded-xl border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-rose-500"
+                      />
+                    </div>
+                  );
+                })()}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>

@@ -175,28 +175,51 @@ export default function CardDesignerPage() {
   const selectedTheme = themes.find((t) => t.id === selectedThemeId);
 
   const isSponsor = selectedTheme?.cardTypeCode === 'SPONSOR';
-  const isCrew = selectedTheme?.cardTypeCode === 'CREW';
+  const isTrustee = selectedTheme?.cardTypeCode === 'TRUSTEE';
+  const isGuest = selectedTheme?.cardTypeCode === 'GUEST';
+  const isStaff = selectedTheme?.cardTypeCode === 'STAFF' || selectedTheme?.cardTypeCode === 'CREW';
 
   const sampleCardData: CardRenderData = {
-    cardNumber: isSponsor ? 'NEST-SPON-2026' : isCrew ? 'NEST-CREW-1042' : 'NEST-CARD-107008',
-    qrToken: isSponsor ? '' : 'tok_nest_preview_sample_2026',
+    cardNumber: isSponsor
+      ? 'NEST-SPON-2026'
+      : isTrustee
+      ? 'NEST-TRUS-2026'
+      : isGuest
+      ? 'NEST-GUEST-2026'
+      : isStaff
+      ? 'NEST-STAFF-1042'
+      : 'NEST-CARD-107008',
+    qrToken: isSponsor || isTrustee || isGuest ? '' : 'tok_nest_preview_sample_2026',
     holderNameEn: isSponsor
       ? 'RELIANCE INDUSTRIES LTD.'
-      : isCrew
-      ? 'VIKRAM SHARMA (STAGE CREW)'
+      : isTrustee
+      ? 'SHRI PRAFULBHAI PATEL'
+      : isGuest
+      ? 'HONORABLE GUEST'
+      : isStaff
+      ? 'POLICE'
       : selectedTheme?.genderRule === 'FEMALE'
       ? 'Pooja Sanjaybhai Shah'
       : 'Rahul Maheshbhai Patel',
+    designation: isStaff ? 'POLICE' : undefined,
     categoryEn: selectedTheme?.cardTypeNameEn || 'Participant',
     categoryCode: selectedTheme?.cardTypeCode || 'REG_PARTICIPANT',
     gender: selectedTheme?.genderRule || 'MALE',
     validFrom: '01-Oct-2026',
     validTo: '12-Oct-2026',
-    areaZone: isSponsor ? 'Sponsor Lounge' : isCrew ? 'Backstage / Production' : 'East Zone / Vasad',
+    areaZone: isSponsor
+      ? 'Sponsor Lounge'
+      : isTrustee
+      ? 'Trustee Lounge'
+      : isGuest
+      ? 'VIP Guest Enclosure'
+      : isStaff
+      ? 'Security / Law Enforcement'
+      : 'East Zone / Vasad',
     eventNameEn: 'NAVRATRI MAHOTSAV 2026',
     organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
-    physicalFormNumber: isSponsor ? null : '1042',
-    receiptNumber: isSponsor ? null : '8593',
+    physicalFormNumber: isSponsor || isTrustee || isGuest ? null : '1042',
+    receiptNumber: isSponsor || isTrustee || isGuest ? null : '8593',
     backgroundTemplateUrl: activeColors.watermarkUrl || undefined,
   };
 
@@ -494,7 +517,7 @@ export default function CardDesignerPage() {
                 )}
               </div>
               <p className="text-[11px] text-slate-500">
-                Upload custom background card design for {selectedTheme?.cardTypeNameEn || 'this category'} (e.g. Sponsor or Crew artwork).
+                Upload custom background card design for {selectedTheme?.cardTypeNameEn || 'this category'} (e.g. Sponsor, Trustee, Guest, or Staff artwork).
               </p>
 
               <div className="flex items-center gap-2">

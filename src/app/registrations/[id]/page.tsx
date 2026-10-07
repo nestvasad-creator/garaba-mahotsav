@@ -934,6 +934,7 @@ export default function RegistrationDetailPage() {
                           areaZone: data.area_zone || 'East Zone / Vasad',
                           eventNameEn: 'NAVRATRI MAHOTSAV 2026',
                           organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
+                          designation: data.id_card?.metadata?.designation || data.id_card?.metadata?.organization || data.area_zone || null,
                         }}
                         theme={
                           data.id_card?.card_themes

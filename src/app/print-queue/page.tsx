@@ -1302,6 +1302,7 @@ export default function PrintQueuePage() {
                     organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
                     physicalFormNumber: previewCard.physicalFormNumber || null,
                     receiptNumber: previewCard.receiptNumber || null,
+                    designation: previewCard.designation || null,
                   }}
                   theme={previewCard.theme}
                   scale={1.05}
@@ -1564,6 +1565,7 @@ export default function PrintQueuePage() {
                           organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
                           physicalFormNumber: batchProgress.activeCard.physicalFormNumber || null,
                           receiptNumber: batchProgress.activeCard.receiptNumber || null,
+                          designation: batchProgress.activeCard.designation || null,
                         }}
                         theme={batchProgress.activeCard.theme}
                         scale={0.65}
@@ -1999,6 +2001,7 @@ export default function PrintQueuePage() {
                 organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
                 physicalFormNumber: directPrintingJob.physicalFormNumber || null,
                 receiptNumber: directPrintingJob.receiptNumber || null,
+                designation: directPrintingJob.designation || null,
               }}
               theme={directPrintingJob.theme}
               scale={1.0}
@@ -2031,6 +2034,7 @@ export default function PrintQueuePage() {
                   organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
                   physicalFormNumber: card.physicalFormNumber || null,
                   receiptNumber: card.receiptNumber || null,
+                  designation: card.designation || null,
                 }}
                 theme={card.theme}
                 scale={1.0}
