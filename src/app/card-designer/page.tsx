@@ -228,7 +228,7 @@ export default function CardDesignerPage() {
       ? 'Security / Law Enforcement'
       : 'East Zone / Vasad',
     eventNameEn: 'NAVRATRI MAHOTSAV 2026',
-    organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
+    organizationEn: isStaff ? undefined : 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
     physicalFormNumber: isSponsor || isTrustee || isGuest || isStaff ? null : '1042',
     receiptNumber: isSponsor || isTrustee || isGuest || isStaff ? null : '8593',
     backgroundTemplateUrl: activeColors.watermarkUrl || undefined,

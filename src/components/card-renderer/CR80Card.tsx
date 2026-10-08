@@ -160,16 +160,26 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     }
     const scaledFontSize = Math.max(9, Math.round(nameFontSize * scale * 10) / 10);
 
+    const isTrustOrgName = (val?: string | null) => {
+      if (!val) return false;
+      const u = val.toUpperCase();
+      return u.includes('ENGLISH SCHOOL') || u.includes('NEST') || u.includes('TRUST');
+    };
+
     // Dynamic Role / Department calculation for Staff (e.g. POLICE, GEB, FIRE, etc.)
     const rawStaffDept = (
-      data.designation ||
-      data.organizationEn ||
-      ''
+      data.designation && !isTrustOrgName(data.designation)
+        ? data.designation
+        : ''
     ).trim();
     const staffDept = rawStaffDept.toUpperCase();
 
-    // Candidate Personal Name for Staff
-    const rawCandidateName = (data.holderNameEn || '').trim();
+    // Candidate Personal Name for Staff (excluding trust/organization text)
+    const rawCandidateName = (
+      data.holderNameEn && !isTrustOrgName(data.holderNameEn)
+        ? data.holderNameEn
+        : ''
+    ).trim();
     const staffCandidateName = rawCandidateName.toUpperCase();
 
     // Check if distinct candidate name is present for Staff
