@@ -170,16 +170,15 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     const rawStaffDept = (
       data.designation && !isTrustOrgName(data.designation)
         ? data.designation
-        : ''
+        : (isStaff && data.areaZone && !isTrustOrgName(data.areaZone) && !data.areaZone.startsWith('Form #') && !data.areaZone.toLowerCase().includes('east zone')
+          ? data.areaZone
+          : '')
     ).trim();
     const staffDept = rawStaffDept.toUpperCase();
 
     // Candidate Personal Name for Staff (excluding trust/organization text)
-    const rawCandidateName = (
-      data.holderNameEn && !isTrustOrgName(data.holderNameEn)
-        ? data.holderNameEn
-        : ''
-    ).trim();
+    const candidateNameStr = (data.holderNameEn || data.holderNameGu || '').trim();
+    const rawCandidateName = !isTrustOrgName(candidateNameStr) ? candidateNameStr : '';
     const staffCandidateName = rawCandidateName.toUpperCase();
 
     // Check if distinct candidate name is present for Staff

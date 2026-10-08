@@ -122,7 +122,7 @@ export async function getPrintQueuePaginated(params: {
     let query = adminClient
       .from('id_cards')
       .select(
-        '*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)',
+        '*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, area_zone, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)',
         { count: 'exact' }
       )
       .eq('event_id', eventId);
@@ -317,7 +317,7 @@ export async function getPrintQueue(
     // Linked with registrations table so edited participant details are always fresh
     let { data: cards, error } = await adminClient
       .from('id_cards')
-      .select('*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)')
+      .select('*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, area_zone, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)')
       .eq('event_id', eventId)
       .in('status', ['APPROVED', 'PRINT_QUEUED', 'PRINTED', 'REPRINTED'])
       .order('updated_at', { ascending: false });
@@ -325,7 +325,7 @@ export async function getPrintQueue(
     // 2. Ensure any approved registrations that might be missing an id_cards row get generated automatically
     const { data: approvedRegs } = await adminClient
       .from('registrations')
-      .select('id, event_id, registration_number, full_name_en, full_name_gu, mobile, gender, category_id, receipt_number, physical_form_number')
+      .select('id, event_id, registration_number, full_name_en, full_name_gu, mobile, gender, category_id, receipt_number, physical_form_number, area_zone')
       .eq('event_id', eventId)
       .eq('status', 'APPROVED');
 
@@ -368,6 +368,7 @@ export async function getPrintQueue(
               physical_form_number: ar.physical_form_number,
               receipt_number: ar.receipt_number || null,
               gender: ar.gender,
+              designation: ar.area_zone && !ar.area_zone.startsWith('Form #') && !ar.area_zone.startsWith('East Zone') ? ar.area_zone : null,
             },
           });
           createdAny = true;
@@ -377,7 +378,7 @@ export async function getPrintQueue(
       if (createdAny) {
         const refetch = await adminClient
           .from('id_cards')
-          .select('*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)')
+          .select('*, registrations!registration_id(id, full_name_en, full_name_gu, mobile, gender, receipt_number, physical_form_number, area_zone, category_id, status), card_types!card_type_id(id, code, name_en, name_gu), card_themes!theme_id(*)')
           .eq('event_id', eventId)
           .in('status', ['APPROVED', 'PRINT_QUEUED', 'PRINTED', 'REPRINTED'])
           .order('updated_at', { ascending: false });
