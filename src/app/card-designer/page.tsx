@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Download,
   Upload,
+  Type,
 } from 'lucide-react';
 import Link from 'next/link';
 import { saveCardAsImage, printCardDirectly } from '@/lib/cards/exportCard';
@@ -57,6 +58,11 @@ export default function CardDesignerPage() {
 
   const [side, setSide] = useState<'front' | 'back'>('front');
   const [scale, setScale] = useState<number>(1.0);
+
+  // Live preview content customization state
+  const [previewStaffRole, setPreviewStaffRole] = useState('POLICE');
+  const [previewStaffName, setPreviewStaffName] = useState('Rahul Maheshbhai Patel');
+  const [previewCustomName, setPreviewCustomName] = useState('');
 
   // Active theme editing state
   const [activeColors, setActiveColors] = useState<ResolvedCardTheme & { watermarkUrl?: string | null }>({
@@ -179,6 +185,19 @@ export default function CardDesignerPage() {
   const isGuest = selectedTheme?.cardTypeCode === 'GUEST';
   const isStaff = selectedTheme?.cardTypeCode === 'STAFF' || selectedTheme?.cardTypeCode === 'CREW';
 
+  const defaultSampleName = isSponsor
+    ? 'RELIANCE INDUSTRIES LTD.'
+    : isTrustee
+    ? 'SHRI PRAFULBHAI PATEL'
+    : isGuest
+    ? 'HONORABLE GUEST'
+    : selectedTheme?.genderRule === 'FEMALE'
+    ? 'Pooja Sanjaybhai Shah'
+    : 'Rahul Maheshbhai Patel';
+
+  const effectiveStaffRole = previewStaffRole.trim() || 'POLICE';
+  const effectiveStaffCandidate = previewStaffName.trim();
+
   const sampleCardData: CardRenderData = {
     cardNumber: isSponsor
       ? 'NEST-SPON-2026'
@@ -190,18 +209,10 @@ export default function CardDesignerPage() {
       ? 'NEST-STAFF-1042'
       : 'NEST-CARD-107008',
     qrToken: isSponsor || isTrustee || isGuest || isStaff ? '' : 'tok_nest_preview_sample_2026',
-    holderNameEn: isSponsor
-      ? 'RELIANCE INDUSTRIES LTD.'
-      : isTrustee
-      ? 'SHRI PRAFULBHAI PATEL'
-      : isGuest
-      ? 'HONORABLE GUEST'
-      : isStaff
-      ? 'POLICE'
-      : selectedTheme?.genderRule === 'FEMALE'
-      ? 'Pooja Sanjaybhai Shah'
-      : 'Rahul Maheshbhai Patel',
-    designation: isStaff ? 'POLICE' : undefined,
+    holderNameEn: isStaff
+      ? (effectiveStaffCandidate || effectiveStaffRole)
+      : (previewCustomName.trim() || defaultSampleName),
+    designation: isStaff ? effectiveStaffRole : undefined,
     categoryEn: selectedTheme?.cardTypeNameEn || 'Participant',
     categoryCode: selectedTheme?.cardTypeCode || 'REG_PARTICIPANT',
     gender: selectedTheme?.genderRule || 'MALE',
@@ -595,6 +606,99 @@ export default function CardDesignerPage() {
                   125%
                 </button>
               </div>
+            </div>
+
+            {/* Live Interactive Preview Data Controls */}
+            <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wide">
+                  <Type className="w-3.5 h-3.5 text-blue-600" />
+                  Live Preview Content (Real-time Test)
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Type custom text to preview layout on card
+                </span>
+              </div>
+
+              {isStaff ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">
+                        Department / Role Title
+                      </label>
+                      <input
+                        type="text"
+                        value={previewStaffRole}
+                        onChange={(e) => setPreviewStaffRole(e.target.value)}
+                        placeholder="e.g. POLICE or GEB"
+                        className="w-full text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">
+                        Candidate Personal Name <span className="font-normal text-slate-400">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={previewStaffName}
+                        onChange={(e) => setPreviewStaffName(e.target.value)}
+                        placeholder="e.g. Rahul Patel (blank = dept only)"
+                        className="w-full text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Preset Role Chips */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="text-[10px] font-medium text-slate-400">Presets:</span>
+                    {['POLICE', 'GEB', 'SECURITY', 'FIRE SAFETY', 'VOLUNTEER', 'MEDICAL'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setPreviewStaffRole(preset)}
+                        className={`text-[10px] px-2 py-0.5 rounded-md font-semibold transition border ${
+                          previewStaffRole.toUpperCase() === preset
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                    {previewStaffName && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewStaffName('')}
+                        className="text-[10px] text-rose-600 hover:underline ml-auto font-medium"
+                      >
+                        Clear Name (Dept Only)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={previewCustomName}
+                      onChange={(e) => setPreviewCustomName(e.target.value)}
+                      placeholder={`Preview name: e.g. ${defaultSampleName}`}
+                      className="w-full text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  {previewCustomName && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewCustomName('')}
+                      className="text-[10px] px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold"
+                    >
+                      Reset Default
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Interactive Card Stage */}

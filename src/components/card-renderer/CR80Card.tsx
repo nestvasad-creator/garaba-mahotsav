@@ -160,20 +160,40 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     }
     const scaledFontSize = Math.max(9, Math.round(nameFontSize * scale * 10) / 10);
 
-    // Dynamic Role / Category calculation for Staff (e.g. POLICE, GEB, FIRE, etc.)
-    const rawStaffRole = (
+    // Dynamic Role / Department calculation for Staff (e.g. POLICE, GEB, FIRE, etc.)
+    const rawStaffDept = (
       data.designation ||
       data.organizationEn ||
-      data.holderNameEn ||
-      data.categoryEn ||
-      'STAFF'
+      ''
     ).trim();
-    const staffRoleName = rawStaffRole.toUpperCase();
+    const staffDept = rawStaffDept.toUpperCase();
 
-    // Center Title calculation for Sponsor / Trustee / Staff
-    const centerTitle = isStaff ? staffRoleName : name;
+    // Candidate Personal Name for Staff
+    const rawCandidateName = (data.holderNameEn || '').trim();
+    const staffCandidateName = rawCandidateName.toUpperCase();
 
-    // Responsive font size for Sponsor / Trustee / Staff Title in the center
+    // Check if distinct candidate name is present for Staff
+    const hasStaffDept = isStaff && staffDept.length > 0;
+    const hasDistinctCandidateName =
+      isStaff &&
+      staffCandidateName.length > 0 &&
+      staffCandidateName !== staffDept &&
+      staffCandidateName !== 'STAFF' &&
+      staffCandidateName !== 'PARTICIPANT';
+
+    // Show both department and candidate name if both are present and distinct
+    const showBothStaffFields = isStaff && hasStaffDept && hasDistinctCandidateName;
+
+    // Single Center Title fallback calculation (Sponsor, Trustee, or single-title Staff)
+    const singleStaffTitle = hasStaffDept
+      ? staffDept
+      : staffCandidateName.length > 0
+      ? staffCandidateName
+      : (data.categoryEn || 'STAFF').trim().toUpperCase();
+
+    const centerTitle = isStaff ? singleStaffTitle : name;
+
+    // Responsive font size for Sponsor / Trustee / Staff Title in the center (single title)
     let centerTitleFontSize = 16.5;
     if (centerTitle.length > 32) {
       centerTitleFontSize = 10;
@@ -184,7 +204,28 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     } else if (centerTitle.length > 12) {
       centerTitleFontSize = 14.5;
     }
-    const scaledCenterTitleFontSize = Math.max(9, Math.round(centerTitleFontSize * scale));
+    const scaledCenterTitleFontSize = Math.max(9, Math.round(centerTitleFontSize * scale * 10) / 10);
+
+    // Responsive font sizes when both Department and Candidate Name are shown
+    let staffDeptFontSize = 15.0;
+    if (staffDept.length > 25) {
+      staffDeptFontSize = 10.0;
+    } else if (staffDept.length > 18) {
+      staffDeptFontSize = 11.5;
+    } else if (staffDept.length > 12) {
+      staffDeptFontSize = 13.0;
+    }
+    const scaledStaffDeptFontSize = Math.max(9, Math.round(staffDeptFontSize * scale * 10) / 10);
+
+    let staffNameFontSize = 12.8;
+    if (staffCandidateName.length > 26) {
+      staffNameFontSize = 9.2;
+    } else if (staffCandidateName.length > 18) {
+      staffNameFontSize = 10.5;
+    } else if (staffCandidateName.length > 12) {
+      staffNameFontSize = 11.8;
+    }
+    const scaledStaffNameFontSize = Math.max(8.5, Math.round(staffNameFontSize * scale * 10) / 10);
 
     // Normalize category: if it says "Registered Participant" (or anything containing participant), shorten to "PARTICIPANT"
     const rawCategory = (data.categoryEn || 'PARTICIPANT').trim();
@@ -404,16 +445,16 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: `${Math.round(8 * scale)}px`,
+              gap: `${Math.round((showBothStaffFields ? 6 : 8) * scale)}px`,
               zIndex: 15,
             }}
           >
             {/* Center Logo */}
             <div
               style={{
-                width: `${Math.round(92 * scale)}px`,
-                height: `${Math.round(92 * scale)}px`,
-                maxHeight: '52%',
+                width: `${Math.round((showBothStaffFields ? 82 : 92) * scale)}px`,
+                height: `${Math.round((showBothStaffFields ? 82 : 92) * scale)}px`,
+                maxHeight: showBothStaffFields ? '46%' : '52%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -430,27 +471,86 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               />
             </div>
 
-            {/* Name/Role below Logo (Auto-adjusted font size to fit neatly) */}
-            <div
-              style={{
-                width: '100%',
-                textAlign: 'center',
-                color: textColor,
-                fontWeight: 900,
-                letterSpacing: '0.04em',
-                fontSize: `${scaledCenterTitleFontSize}px`,
-                lineHeight: 1.22,
-                textTransform: 'uppercase',
-                textShadow: isDarkText
-                  ? '0 1px 2px rgba(255, 255, 255, 0.7)'
-                  : '0 1px 2px rgba(0, 0, 0, 0.65)',
-                wordBreak: 'normal',
-                overflowWrap: 'break-word',
-              }}
-              title={centerTitle}
-            >
-              {centerTitle}
-            </div>
+            {/* If Staff with Both Department and Candidate Name */}
+            {showBothStaffFields ? (
+              <div
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: `${Math.round(2 * scale)}px`,
+                }}
+              >
+                {/* Department / Category Title (e.g. POLICE, GEB) */}
+                <div
+                  style={{
+                    width: '100%',
+                    textAlign: 'center',
+                    color: textColor,
+                    fontWeight: 900,
+                    letterSpacing: '0.04em',
+                    fontSize: `${scaledStaffDeptFontSize}px`,
+                    lineHeight: 1.18,
+                    textTransform: 'uppercase',
+                    textShadow: isDarkText
+                      ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                      : '0 1px 2px rgba(0, 0, 0, 0.65)',
+                    wordBreak: 'normal',
+                    overflowWrap: 'break-word',
+                  }}
+                  title={`Department: ${staffDept}`}
+                >
+                  {staffDept}
+                </div>
+
+                {/* Candidate Personal Name */}
+                <div
+                  style={{
+                    width: '100%',
+                    textAlign: 'center',
+                    color: textColor,
+                    fontWeight: 800,
+                    letterSpacing: '0.02em',
+                    fontSize: `${scaledStaffNameFontSize}px`,
+                    lineHeight: 1.15,
+                    textTransform: 'uppercase',
+                    opacity: 0.95,
+                    textShadow: isDarkText
+                      ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                      : '0 1px 2px rgba(0, 0, 0, 0.65)',
+                    wordBreak: 'normal',
+                    overflowWrap: 'break-word',
+                  }}
+                  title={`Candidate: ${staffCandidateName}`}
+                >
+                  {staffCandidateName}
+                </div>
+              </div>
+            ) : (
+              /* Single Center Title (Sponsor, Trustee, or Staff with single title) */
+              <div
+                style={{
+                  width: '100%',
+                  textAlign: 'center',
+                  color: textColor,
+                  fontWeight: 900,
+                  letterSpacing: '0.04em',
+                  fontSize: `${scaledCenterTitleFontSize}px`,
+                  lineHeight: 1.22,
+                  textTransform: 'uppercase',
+                  textShadow: isDarkText
+                    ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                    : '0 1px 2px rgba(0, 0, 0, 0.65)',
+                  wordBreak: 'normal',
+                  overflowWrap: 'break-word',
+                }}
+                title={centerTitle}
+              >
+                {centerTitle}
+              </div>
+            )}
           </div>
         )}
 
