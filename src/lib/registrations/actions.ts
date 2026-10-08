@@ -159,6 +159,7 @@ export async function createRegistration(
     formBase64?: string;
     formMime?: string;
     formFileName?: string;
+    designation?: string;
   }
 ) {
   const adminClient = createAdminClient();
@@ -283,7 +284,7 @@ export async function createRegistration(
     alternate_mobile: formData.alternate_mobile?.trim() || null,
     address_en: formData.address_en?.trim() || 'As per physical form / Vasad',
     address_gu: formData.address_gu?.trim() || formData.address_en?.trim() || 'As per physical form / Vasad',
-    area_zone: formData.area_zone || (formNo ? `Form #${formNo.trim()}` : (isTrustee ? 'Trustee Lounge' : (isSponsor ? 'Sponsor Lounge' : (isGuest ? 'VIP Guest Enclosure' : (isStaff ? 'Staff / Law Enforcement' : 'East Zone / Vasad'))))),
+    area_zone: formData.area_zone || (formData.designation?.trim()) || (isStaff ? 'Staff' : (formNo ? `Form #${formNo.trim()}` : (isTrustee ? 'Trustee Lounge' : (isSponsor ? 'Sponsor Lounge' : (isGuest ? 'VIP Guest Enclosure' : 'East Zone / Vasad'))))),
     city: formData.city || 'Vasad',
     state: formData.state || 'Gujarat',
     pincode: formData.pincode || '388306',
@@ -506,6 +507,7 @@ export async function createRegistration(
     try {
       await syncRegistrationToIdCard(adminClient, data.id, {
         ...data,
+        designation: (formData as any).designation?.trim() || data.area_zone,
         status: 'APPROVED',
       });
     } catch (cardErr) {
@@ -718,6 +720,7 @@ export async function updateRegistration(
     address_en?: string;
     address_gu?: string;
     area_zone?: string;
+    designation?: string;
     city?: string;
     state?: string;
     pincode?: string;
@@ -811,7 +814,9 @@ export async function updateRegistration(
       }
       updatePayload.receipt_number = rNo;
     }
-    if (formData.area_zone !== undefined) {
+    if (formData.designation !== undefined) {
+      updatePayload.area_zone = formData.designation.trim();
+    } else if (formData.area_zone !== undefined) {
       updatePayload.area_zone = formData.area_zone;
     }
     if (formData.city !== undefined) {
@@ -1032,7 +1037,10 @@ export async function updateRegistration(
     }
 
     // 6. Synchronize with id_cards table so Print Queue and physical badge reflect updates immediately
-    await syncRegistrationToIdCard(adminClient, id, updated);
+    await syncRegistrationToIdCard(adminClient, id, {
+      ...updated,
+      designation: formData.designation?.trim() || updated.area_zone,
+    });
 
     // 7. Audit Log
     if (updaterId) {
@@ -1097,6 +1105,14 @@ async function syncRegistrationToIdCard(adminClient: any, regId: string, updated
       .limit(1)
       .maybeSingle();
 
+    const staffDesignation = updatedReg.designation?.trim() || (
+      updatedReg.area_zone &&
+      !updatedReg.area_zone.startsWith('Form #') &&
+      !updatedReg.area_zone.startsWith('East Zone')
+        ? updatedReg.area_zone.trim()
+        : null
+    );
+
     const meta = {
       ...(existCard?.metadata || {}),
       physical_form_number: updatedReg.physical_form_number,
@@ -1106,6 +1122,7 @@ async function syncRegistrationToIdCard(adminClient: any, regId: string, updated
       address: updatedReg.address_en,
       city: updatedReg.city,
       pincode: updatedReg.pincode,
+      designation: staffDesignation || existCard?.metadata?.designation || null,
     };
 
     if (existCard) {

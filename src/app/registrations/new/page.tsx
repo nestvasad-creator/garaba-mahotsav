@@ -23,6 +23,7 @@ import {
   Layers,
   Receipt,
   MapPin,
+  Shield,
 } from 'lucide-react';
 
 export default function NewRegistrationPage() {
@@ -58,6 +59,7 @@ export default function NewRegistrationPage() {
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('Vasad');
   const [pincode, setPincode] = useState('388306');
+  const [staffDept, setStaffDept] = useState('POLICE');
 
   // Duplicate Warning State
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
@@ -292,6 +294,11 @@ export default function NewRegistrationPage() {
       return;
     }
 
+    if (isStaff && !staffDept.trim()) {
+      setErrorMessage('Staff Department / Role is mandatory (e.g. POLICE, GEB).');
+      return;
+    }
+
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -318,7 +325,8 @@ export default function NewRegistrationPage() {
         full_name_gu: fullName.trim(),
         gender,
         mobile: mobile.trim(),
-        area_zone: `Form #${formSerialNo.trim()}`,
+        area_zone: isStaff && staffDept.trim() ? staffDept.trim() : `Form #${formSerialNo.trim()}`,
+        designation: isStaff && staffDept.trim() ? staffDept.trim() : undefined,
         address_en: address.trim() || 'As per physical application form / Vasad',
         address_gu: address.trim() || 'As per physical application form / Vasad',
         city: city.trim() || 'Vasad',
@@ -536,6 +544,49 @@ export default function NewRegistrationPage() {
                     Assigns participant tier and venue access permissions
                   </span>
                 </div>
+
+                {/* Staff Department / Designation Input */}
+                {isStaff && (
+                  <div className="md:col-span-2 p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl space-y-2 mt-1">
+                    <label className="block text-xs font-bold text-blue-900 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Shield className="w-4 h-4 text-blue-600" />
+                        Staff Department / Role Title <span className="text-rose-500">*</span>
+                      </span>
+                      <span className="text-[10px] text-blue-700 bg-blue-100 px-2 py-0.5 rounded font-semibold">
+                        Printed on Badge Center
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      required={isStaff}
+                      placeholder="e.g. POLICE, GEB, FIRE SAFETY, SECURITY, VOLUNTEER"
+                      value={staffDept}
+                      onChange={(e) => setStaffDept(e.target.value.toUpperCase())}
+                      className="w-full text-xs rounded-xl border border-blue-300 p-2.5 font-bold uppercase tracking-wider bg-white text-blue-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      <span className="text-[10px] font-semibold text-blue-700">Quick Presets:</span>
+                      {['POLICE', 'GEB', 'SECURITY', 'FIRE SAFETY', 'VOLUNTEER', 'MEDICAL'].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setStaffDept(preset)}
+                          className={`text-[10px] px-2.5 py-1 rounded-md font-bold transition border ${
+                            staffDept === preset
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-white text-blue-800 border-blue-200 hover:bg-blue-100'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[10px] text-blue-600 block">
+                      This department title will appear prominently below the NEST logo on the staff CR80 physical badge.
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Row 3: Gender Selection */}

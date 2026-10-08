@@ -241,7 +241,9 @@ export async function getPrintQueuePaginated(params: {
       const gender = reg?.gender || c.metadata?.gender || null;
       const receiptNumber = reg?.receipt_number || c.metadata?.receipt_number || null;
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
-      const designation = c.metadata?.designation || c.metadata?.organization || reg?.area_zone || null;
+      const isStaffCard = (c.card_types?.code || '').toUpperCase().includes('STAFF') ||
+                          (c.card_types?.name_en || '').toUpperCase().includes('STAFF');
+      const designation = c.metadata?.designation || c.metadata?.organization || (isStaffCard && reg?.area_zone && !reg.area_zone.startsWith('Form #') ? reg.area_zone : null) || null;
 
       return {
         id: latestJob?.id || c.id,
@@ -485,7 +487,9 @@ export async function getPrintQueue(
       const gender = reg?.gender || c.metadata?.gender || null;
       const receiptNumber = reg?.receipt_number || c.metadata?.receipt_number || null;
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
-      const designation = c.metadata?.designation || c.metadata?.organization || reg?.area_zone || null;
+      const isStaffCard = (c.card_types?.code || '').toUpperCase().includes('STAFF') ||
+                          (c.card_types?.name_en || '').toUpperCase().includes('STAFF');
+      const designation = c.metadata?.designation || c.metadata?.organization || (isStaffCard && reg?.area_zone && !reg.area_zone.startsWith('Form #') ? reg.area_zone : null) || null;
 
       return {
         id: latestJob?.id || c.id,

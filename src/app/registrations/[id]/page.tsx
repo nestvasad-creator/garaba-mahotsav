@@ -25,6 +25,7 @@ import {
   Check,
   Receipt,
   Printer,
+  Shield,
 } from 'lucide-react';
 import { getRegistrationById, updateRegistration, getCardTypes, checkUniqueField } from '@/lib/registrations/actions';
 import { verifyRegistrationAction } from '@/lib/verification/actions';
@@ -66,6 +67,7 @@ export default function RegistrationDetailPage() {
   const [editMobile, setEditMobile] = useState('');
   const [editAltMobile, setEditAltMobile] = useState('');
   const [editCategoryId, setEditCategoryId] = useState('');
+  const [editDesignation, setEditDesignation] = useState('');
   const [editDob, setEditDob] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editCity, setEditCity] = useState('');
@@ -217,6 +219,12 @@ export default function RegistrationDetailPage() {
     setEditMobile(reg.mobile || '');
     setEditAltMobile(reg.alternate_mobile || '');
     setEditCategoryId(reg.category_id || '');
+    const currentStaffDept = reg?.id_card?.metadata?.designation || (
+      reg?.area_zone && !reg.area_zone.startsWith('Form #') && !reg.area_zone.startsWith('East Zone')
+        ? reg.area_zone
+        : ''
+    );
+    setEditDesignation(currentStaffDept || 'POLICE');
     setEditDob(reg.dob ? reg.dob.split('T')[0] : '');
     setEditAddress(reg.address_en || '');
     setEditCity(reg.city || 'Vasad');
@@ -405,6 +413,15 @@ export default function RegistrationDetailPage() {
       return;
     }
 
+    const selectedEditCat = categories.find((c) => c.id === editCategoryId);
+    const isStaff = (selectedEditCat?.code || '').toUpperCase().includes('STAFF') ||
+                    (selectedEditCat?.name_en || '').toUpperCase().includes('STAFF');
+
+    if (isStaff && !editDesignation.trim()) {
+      setEditError('Staff Department / Designation is required.');
+      return;
+    }
+
     setSaving(true);
     setEditError(null);
 
@@ -430,6 +447,8 @@ export default function RegistrationDetailPage() {
         mobile: editMobile.trim(),
         alternate_mobile: editAltMobile.trim() || null,
         category_id: editCategoryId,
+        designation: isStaff ? editDesignation.trim() : undefined,
+        area_zone: isStaff ? editDesignation.trim() : (data?.area_zone || undefined),
         dob: editDob || null,
         address_en: editAddress.trim(),
         address_gu: editAddress.trim(),
@@ -539,6 +558,18 @@ export default function RegistrationDetailPage() {
   const photoDoc = documents.find((d) => d.doc_type === 'PHOTOGRAPH');
   const proofDoc = documents.find((d) => d.doc_type === 'IDENTITY_PROOF');
   const formDoc = documents.find((d) => d.doc_type === 'APPLICATION_FORM');
+
+  const selectedEditCat = categories.find((c) => c.id === editCategoryId);
+  const isStaffEdit = (selectedEditCat?.code || '').toUpperCase().includes('STAFF') ||
+                      (selectedEditCat?.name_en || '').toUpperCase().includes('STAFF');
+
+  const isStaffView = (data?.card_types?.code || '').toUpperCase().includes('STAFF') ||
+                      (data?.card_types?.name_en || '').toUpperCase().includes('STAFF');
+  const staffDept = data?.id_card?.metadata?.designation || (
+    isStaffView && data?.area_zone && !data.area_zone.startsWith('Form #') && !data.area_zone.startsWith('East Zone')
+      ? data.area_zone
+      : null
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
@@ -754,6 +785,11 @@ export default function RegistrationDetailPage() {
               <div className="text-right text-xs text-amber-800">
                 <span className="text-[10px] text-amber-600 uppercase font-bold block">Assigned Category</span>
                 <span className="font-bold">{data.card_types?.name_en || 'Participant'}</span>
+                {staffDept && (
+                  <span className="block mt-1 font-mono text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                    Dept: {staffDept}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -816,8 +852,12 @@ export default function RegistrationDetailPage() {
                     </div>
 
                     <div>
-                      <span className="text-slate-400 block mb-0.5">Area / Zone</span>
-                      <span className="font-semibold text-slate-800">{data.area_zone || 'Vasad'}</span>
+                      <span className="text-slate-400 block mb-0.5">
+                        {isStaffView ? 'Staff Department / Zone' : 'Area / Zone'}
+                      </span>
+                      <span className="font-semibold text-slate-800">
+                        {staffDept || data.area_zone || 'Vasad'}
+                      </span>
                     </div>
 
                     <div>
@@ -934,7 +974,7 @@ export default function RegistrationDetailPage() {
                           areaZone: data.area_zone || 'East Zone / Vasad',
                           eventNameEn: 'NAVRATRI MAHOTSAV 2026',
                           organizationEn: 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
-                          designation: data.id_card?.metadata?.designation || data.id_card?.metadata?.organization || data.area_zone || null,
+                          designation: staffDept || data.id_card?.metadata?.designation || data.id_card?.metadata?.organization || null,
                         }}
                         theme={
                           data.id_card?.card_themes
@@ -1323,6 +1363,49 @@ export default function RegistrationDetailPage() {
                         ))}
                       </select>
                     </div>
+
+                    {isStaffEdit && (
+                      <div className="sm:col-span-2 bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3">
+                        <div>
+                          <label className="block text-xs font-bold text-amber-950 mb-1 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <Shield className="w-4 h-4 text-amber-700" />
+                              Staff Department / Designation (વિભાગ / હોદ્દો) <span className="text-rose-500">*</span>
+                            </span>
+                            <span className="text-[10px] text-amber-800 font-semibold bg-amber-200/70 px-2 py-0.5 rounded">
+                              Printed on Staff Pass
+                            </span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={editDesignation}
+                            onChange={(e) => setEditDesignation(e.target.value.toUpperCase())}
+                            placeholder="e.g. POLICE, GEB, SECURITY, FIRE SAFETY"
+                            className="w-full text-xs rounded-xl border border-amber-300 p-2.5 font-bold uppercase tracking-wider bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            <span className="text-[11px] font-semibold text-amber-900 self-center mr-1">
+                              Quick presets:
+                            </span>
+                            {['POLICE', 'GEB', 'SECURITY', 'FIRE SAFETY', 'VOLUNTEER', 'MEDICAL'].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setEditDesignation(preset)}
+                                className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition ${
+                                  editDesignation.toUpperCase() === preset
+                                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                    : 'bg-white text-amber-900 border-amber-200 hover:bg-amber-100/60'
+                                }`}
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

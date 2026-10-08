@@ -237,6 +237,28 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     }
     const scaledStaffNameFontSize = Math.max(8.5, Math.round(staffNameFontSize * scale * 10) / 10);
 
+    // Dynamic Name calculation for Guest (display name below logo if provided)
+    const rawGuestName = (data.holderNameEn || '').trim();
+    const isGuestGeneric =
+      rawGuestName.length === 0 ||
+      rawGuestName.toUpperCase() === 'GUEST' ||
+      rawGuestName.toUpperCase() === 'GUEST PASS' ||
+      isTrustOrgName(rawGuestName);
+    const hasGuestName = isGuest && !isGuestGeneric;
+    const guestName = rawGuestName.toUpperCase();
+
+    let guestNameFontSize = 15.5;
+    if (guestName.length > 32) {
+      guestNameFontSize = 10.0;
+    } else if (guestName.length > 24) {
+      guestNameFontSize = 11.5;
+    } else if (guestName.length > 18) {
+      guestNameFontSize = 13.0;
+    } else if (guestName.length > 12) {
+      guestNameFontSize = 14.5;
+    }
+    const scaledGuestNameFontSize = Math.max(9.0, Math.round(guestNameFontSize * scale * 10) / 10);
+
     // Normalize category: if it says "Registered Participant" (or anything containing participant), shorten to "PARTICIPANT"
     const rawCategory = (data.categoryEn || 'PARTICIPANT').trim();
     const isParticipantVariant =
@@ -564,27 +586,28 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
           </div>
         )}
 
-        {/* GUEST SPECIFIC CENTER LAYOUT (Emblem only, without name) */}
+        {/* GUEST SPECIFIC CENTER LAYOUT (Emblem, and Name below if given) */}
         {isGuest && (
           <div
             style={{
               position: 'absolute',
               left: '20%',
               width: '60%',
-              top: '25%',
-              height: '49%',
+              top: '24%',
+              height: '51%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: hasGuestName ? `${Math.round(8 * scale)}px` : 0,
               zIndex: 15,
             }}
           >
             <div
               style={{
-                width: `${Math.round(112 * scale)}px`,
-                height: `${Math.round(112 * scale)}px`,
-                maxHeight: '85%',
+                width: `${Math.round((hasGuestName ? 92 : 112) * scale)}px`,
+                height: `${Math.round((hasGuestName ? 92 : 112) * scale)}px`,
+                maxHeight: hasGuestName ? '52%' : '85%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -600,6 +623,30 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
                 }}
               />
             </div>
+
+            {/* Guest Name below Logo, above bottom GUEST badge (if given) */}
+            {hasGuestName && (
+              <div
+                style={{
+                  width: '100%',
+                  textAlign: 'center',
+                  color: textColor,
+                  fontWeight: 900,
+                  letterSpacing: '0.04em',
+                  fontSize: `${scaledGuestNameFontSize}px`,
+                  lineHeight: 1.22,
+                  textTransform: 'uppercase',
+                  textShadow: isDarkText
+                    ? '0 1px 2px rgba(255, 255, 255, 0.7)'
+                    : '0 1px 2px rgba(0, 0, 0, 0.65)',
+                  wordBreak: 'normal',
+                  overflowWrap: 'break-word',
+                }}
+                title={guestName}
+              >
+                {guestName}
+              </div>
+            )}
           </div>
         )}
 
