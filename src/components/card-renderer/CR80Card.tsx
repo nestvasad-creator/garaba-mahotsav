@@ -115,7 +115,8 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     const accentColor = theme?.accentColor || '#F59E0B';
 
     const catUpper = (data.categoryCode || data.categoryEn || '').toUpperCase();
-    const isSponsor = catUpper.includes('SPONSOR');
+    const isDonor = catUpper.includes('DONOR') || catUpper.includes('SPONSOR');
+    const isSponsor = isDonor;
     const isTrustee = catUpper.includes('TRUSTEE');
     const isGuest = catUpper.includes('GUEST');
     const isStaff = catUpper.includes('STAFF') || catUpper.includes('CREW');
@@ -494,7 +495,7 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={safePhotoUrl || NEST_LOGO_WHITE_DATA_URL}
-                alt={isTrustee ? 'Trustee Logo' : isStaff ? 'Staff Logo' : 'Sponsor Logo'}
+                alt={isTrustee ? 'Trustee Logo' : isStaff ? 'Staff Logo' : isDonor ? 'Donor Logo' : 'Sponsor Logo'}
                 className="w-full h-full object-contain select-none"
                 style={{
                   filter: !safePhotoUrl && isDarkText ? 'invert(1)' : 'none',

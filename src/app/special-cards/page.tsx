@@ -283,7 +283,7 @@ export default function SpecialCardsPage() {
                           <Award className="w-8 h-8 text-slate-300 mx-auto" />
                           <p className="font-semibold text-slate-700">No Special Passes Issued Yet</p>
                           <p className="text-[11px] text-slate-500">
-                            Click &quot;Issue Special Access Pass&quot; above to create Sponsor, Crew, or Security badges.
+                            Click &quot;Issue Special Access Pass&quot; above to create Donor, Crew, or Security badges.
                           </p>
                         </div>
                       </td>

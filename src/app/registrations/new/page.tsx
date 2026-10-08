@@ -253,9 +253,12 @@ export default function NewRegistrationPage() {
   };
 
   const selectedCat = categories.find((c) => c.id === categoryId);
-  const isSponsor =
+  const isDonor =
+    selectedCat?.code === 'DONOR' ||
     selectedCat?.code === 'SPONSOR' ||
+    selectedCat?.name_en?.toUpperCase().includes('DONOR') ||
     selectedCat?.name_en?.toUpperCase().includes('SPONSOR');
+  const isSponsor = isDonor;
   const isTrustee =
     selectedCat?.code === 'TRUSTEE' ||
     selectedCat?.name_en?.toUpperCase().includes('TRUSTEE');
@@ -268,8 +271,8 @@ export default function NewRegistrationPage() {
     selectedCat?.name_en?.toUpperCase().includes('STAFF') ||
     selectedCat?.name_en?.toUpperCase().includes('CREW');
 
-  const requiresForm = !isSponsor && !isTrustee && !isGuest;
-  const requiresPhoto = !isSponsor && !isTrustee && !isGuest && !isStaff;
+  const requiresForm = !isDonor && !isTrustee && !isGuest;
+  const requiresPhoto = !isDonor && !isTrustee && !isGuest && !isStaff;
 
   const handleSubmit = async (e: React.FormEvent, status: 'DRAFT' | 'SUBMITTED') => {
     e.preventDefault();
@@ -639,13 +642,13 @@ export default function NewRegistrationPage() {
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
                         requiresForm ? 'text-blue-700 bg-blue-100/70' : 'text-slate-600 bg-slate-100'
                       }`}>
-                        {requiresForm ? 'Mandatory' : 'Optional (Sponsor)'}
+                        {requiresForm ? 'Mandatory' : 'Optional (Donor)'}
                       </span>
                     </label>
                     <input
                       type="text"
                       required={requiresForm}
-                      placeholder={requiresForm ? "e.g. FORM-0842, B-104, or 00125" : "Optional for Sponsor"}
+                      placeholder={requiresForm ? "e.g. FORM-0842, B-104, or 00125" : "Optional for Donor"}
                       value={formSerialNo}
                       onChange={(e) => {
                         setFormSerialNo(e.target.value.toUpperCase());
@@ -899,8 +902,8 @@ export default function NewRegistrationPage() {
                     <p className="text-[11px] text-slate-500 mb-3">
                       {requiresPhoto
                         ? 'Clear portrait photo to print on physical PVC card'
-                        : isSponsor || isTrustee
-                        ? 'Photo is not required for Sponsor & Trustee cards'
+                        : isDonor || isTrustee
+                        ? 'Photo is not required for Donor & Trustee cards'
                         : isGuest
                         ? 'Photo is not required for Guest passes'
                         : 'Photo is not required for Staff cards'}

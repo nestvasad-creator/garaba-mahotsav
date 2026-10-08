@@ -236,12 +236,17 @@ export async function createRegistration(
     }
   }
 
-  const isSponsor = resolvedCat?.code === 'SPONSOR' || resolvedCat?.name_en?.toUpperCase().includes('SPONSOR');
+  const isDonor =
+    resolvedCat?.code === 'DONOR' ||
+    resolvedCat?.code === 'SPONSOR' ||
+    resolvedCat?.name_en?.toUpperCase().includes('DONOR') ||
+    resolvedCat?.name_en?.toUpperCase().includes('SPONSOR');
+  const isSponsor = isDonor;
   const isTrustee = resolvedCat?.code === 'TRUSTEE' || resolvedCat?.name_en?.toUpperCase().includes('TRUSTEE');
   const isGuest = resolvedCat?.code === 'GUEST' || resolvedCat?.name_en?.toUpperCase().includes('GUEST');
   const isStaff = resolvedCat?.code === 'STAFF' || resolvedCat?.code === 'CREW' || resolvedCat?.name_en?.toUpperCase().includes('STAFF') || resolvedCat?.name_en?.toUpperCase().includes('CREW');
 
-  const isFormExempt = isSponsor || isTrustee || isGuest;
+  const isFormExempt = isDonor || isTrustee || isGuest;
   const formNo = formData.physical_form_number || (formData as any).formSerialNo || null;
 
   if (!isFormExempt && (!formNo || !formNo.trim())) {
@@ -251,7 +256,7 @@ export async function createRegistration(
     };
   }
 
-  const formPrefix = isTrustee ? 'TRUS' : isGuest ? 'GUEST' : isStaff ? 'STAFF' : 'SPON';
+  const formPrefix = isTrustee ? 'TRUS' : isGuest ? 'GUEST' : isStaff ? 'STAFF' : isDonor ? 'DONOR' : 'FORM';
   const resolvedFormNo = formNo?.trim() || (isFormExempt ? `${formPrefix}-${randomDigits}` : '');
 
   let receiptNo = formData.receipt_number?.trim().toUpperCase() || (formData as any).receiptNo?.trim().toUpperCase() || null;
@@ -284,7 +289,7 @@ export async function createRegistration(
     alternate_mobile: formData.alternate_mobile?.trim() || null,
     address_en: formData.address_en?.trim() || 'As per physical form / Vasad',
     address_gu: formData.address_gu?.trim() || formData.address_en?.trim() || 'As per physical form / Vasad',
-    area_zone: formData.area_zone || (formData.designation?.trim()) || (isStaff ? 'Staff' : (formNo ? `Form #${formNo.trim()}` : (isTrustee ? 'Trustee Lounge' : (isSponsor ? 'Sponsor Lounge' : (isGuest ? 'VIP Guest Enclosure' : 'East Zone / Vasad'))))),
+    area_zone: formData.area_zone || (formData.designation?.trim()) || (isStaff ? 'Staff' : (formNo ? `Form #${formNo.trim()}` : (isTrustee ? 'Trustee Lounge' : (isDonor ? 'Donor Lounge' : (isGuest ? 'VIP Guest Enclosure' : 'East Zone / Vasad'))))),
     city: formData.city || 'Vasad',
     state: formData.state || 'Gujarat',
     pincode: formData.pincode || '388306',
