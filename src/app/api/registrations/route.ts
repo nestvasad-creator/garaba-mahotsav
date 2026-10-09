@@ -1,22 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRegistration, getRegistrations } from '@/lib/registrations/actions';
+import { createRegistration, getRegistrationsPaginated } from '@/lib/registrations/actions';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/registrations
- * Query registrations with optional search and status filtering
+ * Query registrations directly from database with search and status filtering & pagination
  */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const eventId = searchParams.get('event_id') || undefined;
+    const search = searchParams.get('search') || searchParams.get('q') || '';
+    const status = searchParams.get('status') || '';
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.max(1, Math.min(200, parseInt(searchParams.get('limit') || '50', 10)));
 
-    const registrations = await getRegistrations(eventId);
+    const result = await getRegistrationsPaginated({
+      eventId,
+      search,
+      status,
+      page,
+      limit,
+    });
+
     return NextResponse.json({
       success: true,
-      count: registrations.length,
-      data: registrations,
+      data: result.data,
+      count: result.count,
+      totalCount: result.count,
+      totalPages: result.totalPages,
+      page: result.page,
+      limit: result.limit,
     });
   } catch (err: any) {
     console.error('GET /api/registrations error:', err);

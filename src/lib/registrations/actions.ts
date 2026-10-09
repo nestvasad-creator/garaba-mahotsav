@@ -126,24 +126,90 @@ export async function checkUniqueField(params: {
   }
 }
 
+export interface GetRegistrationsParams {
+  eventId?: string;
+  search?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface GetRegistrationsResult {
+  data: any[];
+  count: number;
+  totalPages: number;
+  page: number;
+  limit: number;
+}
+
 /**
- * Fetches registrations from Supabase.
+ * Fetches registrations from Supabase with direct database search across multiple fields and pagination.
  */
-export async function getRegistrations(eventId: string = DEFAULT_EVENT_ID) {
+export async function getRegistrationsPaginated(
+  params: GetRegistrationsParams = {}
+): Promise<GetRegistrationsResult> {
+  const eventId = params.eventId || DEFAULT_EVENT_ID;
+  const page = Math.max(1, params.page || 1);
+  const limit = Math.max(1, Math.min(200, params.limit || 50));
+  const rawSearch = (params.search || '').trim();
+  const search = rawSearch.replace(/[,()]/g, ' ').replace(/\s+/g, ' ').trim();
+  const status = (params.status || '').trim();
+
   const adminClient = createAdminClient();
 
-  const { data, error } = await adminClient
+  let query = adminClient
     .from('registrations')
-    .select('*, card_types(*)')
-    .eq('event_id', eventId)
-    .order('created_at', { ascending: false });
+    .select('*, card_types(*)', { count: 'exact' })
+    .eq('event_id', eventId);
 
-  if (error) {
-    console.error('Fetch registrations error:', error.message);
-    return [];
+  if (status && status !== 'ALL') {
+    query = query.eq('status', status);
   }
 
-  return data || [];
+  if (search) {
+    query = query.or(
+      `full_name_en.ilike.%${search}%,full_name_gu.ilike.%${search}%,mobile.ilike.%${search}%,registration_number.ilike.%${search}%,physical_form_number.ilike.%${search}%,receipt_number.ilike.%${search}%`
+    );
+  }
+
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  const { data, count, error } = await query
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (error) {
+    console.error('Fetch registrations paginated error:', error.message);
+    return { data: [], count: 0, totalPages: 1, page, limit };
+  }
+
+  const totalCount = count || 0;
+  const totalPages = Math.ceil(totalCount / limit) || 1;
+
+  return {
+    data: data || [],
+    count: totalCount,
+    totalPages,
+    page,
+    limit,
+  };
+}
+
+/**
+ * Fetches registrations from Supabase.
+ * Backward-compatible helper supporting either eventId string or GetRegistrationsParams.
+ */
+export async function getRegistrations(
+  paramsOrEventId: string | GetRegistrationsParams = DEFAULT_EVENT_ID
+): Promise<any> {
+  if (typeof paramsOrEventId === 'object' && paramsOrEventId !== null) {
+    return getRegistrationsPaginated(paramsOrEventId);
+  }
+
+  const eventId = paramsOrEventId || DEFAULT_EVENT_ID;
+  const res = await getRegistrationsPaginated({ eventId, limit: 100 });
+  return res.data;
 }
 
 /**
