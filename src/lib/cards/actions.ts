@@ -56,6 +56,8 @@ export interface PrintQueueItem {
   receiptNumber?: string | null;
   physicalFormNumber?: string | null;
   designation?: string | null;
+  showQr?: boolean;
+  showPhoto?: boolean;
   requestedAt: string;
   theme: {
     primaryColor: string;
@@ -63,6 +65,7 @@ export interface PrintQueueItem {
     footerColor: string;
     accentColor: string;
     textColor: string;
+    templateConfig?: Record<string, any>;
   };
 }
 
@@ -243,6 +246,18 @@ export async function getPrintQueuePaginated(params: {
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
       const isStaffCard = (c.card_types?.code || '').toUpperCase().includes('STAFF') ||
                           (c.card_types?.name_en || '').toUpperCase().includes('STAFF');
+      const isVolunteerCard = (c.card_types?.code || '').toUpperCase().includes('VOLUNTEER') ||
+                              (c.card_types?.name_en || '').toUpperCase().includes('VOLUNTEER');
+      const isSponsorCard = (c.card_types?.code || '').toUpperCase().includes('DONOR') ||
+                            (c.card_types?.code || '').toUpperCase().includes('SPONSOR');
+      const isTrusteeCard = (c.card_types?.code || '').toUpperCase().includes('TRUSTEE');
+      const isGuestCard = (c.card_types?.code || '').toUpperCase().includes('GUEST');
+
+      const themeConfig = c.card_themes?.template_config || {};
+      const defaultShow = !isStaffCard && !isVolunteerCard && !isSponsorCard && !isTrusteeCard && !isGuestCard;
+      const showQr = themeConfig.showQr !== undefined ? Boolean(themeConfig.showQr) : defaultShow;
+      const showPhoto = themeConfig.showPhoto !== undefined ? Boolean(themeConfig.showPhoto) : defaultShow;
+
       const designation = c.metadata?.designation || c.metadata?.organization || (isStaffCard && reg?.area_zone && !reg.area_zone.startsWith('Form #') ? reg.area_zone : null) || null;
 
       return {
@@ -265,6 +280,8 @@ export async function getPrintQueuePaginated(params: {
         receiptNumber,
         physicalFormNumber,
         designation,
+        showQr,
+        showPhoto,
         requestedAt: new Date(latestJob?.created_at || c.created_at).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -275,6 +292,7 @@ export async function getPrintQueuePaginated(params: {
           footerColor: c.card_themes?.footer_color || '#700908',
           accentColor: c.card_themes?.accent_color || '#F59E0B',
           textColor: c.card_themes?.text_color || '#FFFFFF',
+          templateConfig: themeConfig,
         },
       };
     });
@@ -490,6 +508,18 @@ export async function getPrintQueue(
       const physicalFormNumber = reg?.physical_form_number || c.metadata?.physical_form_number || null;
       const isStaffCard = (c.card_types?.code || '').toUpperCase().includes('STAFF') ||
                           (c.card_types?.name_en || '').toUpperCase().includes('STAFF');
+      const isVolunteerCard = (c.card_types?.code || '').toUpperCase().includes('VOLUNTEER') ||
+                              (c.card_types?.name_en || '').toUpperCase().includes('VOLUNTEER');
+      const isSponsorCard = (c.card_types?.code || '').toUpperCase().includes('DONOR') ||
+                            (c.card_types?.code || '').toUpperCase().includes('SPONSOR');
+      const isTrusteeCard = (c.card_types?.code || '').toUpperCase().includes('TRUSTEE');
+      const isGuestCard = (c.card_types?.code || '').toUpperCase().includes('GUEST');
+
+      const themeConfig = c.card_themes?.template_config || {};
+      const defaultShow = !isStaffCard && !isVolunteerCard && !isSponsorCard && !isTrusteeCard && !isGuestCard;
+      const showQr = themeConfig.showQr !== undefined ? Boolean(themeConfig.showQr) : defaultShow;
+      const showPhoto = themeConfig.showPhoto !== undefined ? Boolean(themeConfig.showPhoto) : defaultShow;
+
       const designation = c.metadata?.designation || c.metadata?.organization || (isStaffCard && reg?.area_zone && !reg.area_zone.startsWith('Form #') ? reg.area_zone : null) || null;
 
       return {
@@ -512,6 +542,8 @@ export async function getPrintQueue(
         receiptNumber,
         physicalFormNumber,
         designation,
+        showQr,
+        showPhoto,
         requestedAt: new Date(latestJob?.created_at || c.created_at).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -522,6 +554,7 @@ export async function getPrintQueue(
           footerColor: c.card_themes?.footer_color || '#700908',
           accentColor: c.card_themes?.accent_color || '#F59E0B',
           textColor: c.card_themes?.text_color || '#FFFFFF',
+          templateConfig: themeConfig,
         },
       };
     });

@@ -120,13 +120,33 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
     const isTrustee = catUpper.includes('TRUSTEE');
     const isGuest = catUpper.includes('GUEST');
     const isStaff = catUpper.includes('STAFF') || catUpper.includes('CREW');
+    const isVolunteer = catUpper.includes('VOLUNTEER');
 
-    // Sponsor, Trustee, and Staff share the centered logo & title layout
-    const isSpecialCenterLayout = isSponsor || isTrustee || isStaff;
-    // Categories with a prominent center logo (Trustee, Guest, Sponsor, Staff) should not display the top-left logo
-    const hasCenterLogo = isTrustee || isGuest || isSponsor || isStaff;
+    const themeConfig = (theme as any)?.templateConfig || {};
 
-    // For designs featuring a center logo (Trustee, Guest, Sponsor, Staff), default to the
+    const defaultShowQr = !isSponsor && !isTrustee && !isGuest && !isStaff && !isVolunteer;
+    const defaultShowPhoto = !isSponsor && !isTrustee && !isGuest && !isStaff && !isVolunteer;
+
+    const shouldShowQr =
+      data.showQr !== undefined
+        ? Boolean(data.showQr)
+        : themeConfig.showQr !== undefined
+        ? Boolean(themeConfig.showQr)
+        : defaultShowQr;
+
+    const shouldShowPhoto =
+      data.showPhoto !== undefined
+        ? Boolean(data.showPhoto)
+        : themeConfig.showPhoto !== undefined
+        ? Boolean(themeConfig.showPhoto)
+        : defaultShowPhoto;
+
+    // Sponsor, Trustee, Staff, or any card configured without both QR and Photo share the centered logo & title layout
+    const isSpecialCenterLayout = isSponsor || isTrustee || isStaff || (!shouldShowQr && !shouldShowPhoto);
+    // Categories with a prominent center logo (Trustee, Guest, Sponsor, Staff, or layout without QR & Photo) should not display the top-left logo
+    const hasCenterLogo = isTrustee || isGuest || isSponsor || isStaff || (!shouldShowQr && !shouldShowPhoto);
+
+    // For designs featuring a center logo (Trustee, Guest, Sponsor, Staff, or layout without QR & Photo), default to the
     // clean transparent template without the top-left logo to avoid visual redundancy
     const defaultTransparentTemplate = hasCenterLogo
       ? CARD_TEMPLATE_NO_LOGO_TRANSPARENT_DATA_URL
@@ -142,11 +162,8 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
       (theme as any)?.logo_url ||
       defaultTransparentTemplate;
 
-    const shouldShowQr = data.showQr !== undefined ? data.showQr : (!isSpecialCenterLayout && !isGuest);
-    const shouldShowPhoto = data.showPhoto !== undefined ? data.showPhoto : (!isSpecialCenterLayout && !isGuest);
-
     // Dynamic Name calculation & responsive font sizing
-    const name = (data.holderNameEn || 'PARTICIPANT NAME').trim();
+    const name = (data.holderNameEn || (isVolunteer ? 'VOLUNTEER NAME' : 'PARTICIPANT NAME')).trim();
     let nameFontSize = 16.5;
     if (name.length > 27) {
       nameFontSize = 10.2;
@@ -492,13 +509,31 @@ export const CR80Card = forwardRef<HTMLDivElement, CR80CardProps>(
                 justifyContent: 'center',
               }}
             >
+              {/* Center Logo Emblem: for Sponsor, Trustee, Volunteer, or whenever photo is disabled, render NEST Logo */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={safePhotoUrl || NEST_LOGO_WHITE_DATA_URL}
-                alt={isTrustee ? 'Trustee Logo' : isStaff ? 'Staff Logo' : isDonor ? 'Donor Logo' : 'Sponsor Logo'}
+                src={
+                  !shouldShowPhoto || isSponsor || isTrustee || isVolunteer
+                    ? NEST_LOGO_WHITE_DATA_URL
+                    : safePhotoUrl || NEST_LOGO_WHITE_DATA_URL
+                }
+                alt={
+                  isTrustee
+                    ? 'Trustee Logo'
+                    : isStaff
+                    ? 'Staff Logo'
+                    : isDonor
+                    ? 'Donor Logo'
+                    : isVolunteer
+                    ? 'Volunteer Logo'
+                    : 'Nest Logo'
+                }
                 className="w-full h-full object-contain select-none"
                 style={{
-                  filter: !safePhotoUrl && isDarkText ? 'invert(1)' : 'none',
+                  filter:
+                    (!safePhotoUrl || !shouldShowPhoto || isSponsor || isTrustee || isVolunteer) && isDarkText
+                      ? 'invert(1)'
+                      : 'none',
                 }}
               />
             </div>

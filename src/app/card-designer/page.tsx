@@ -16,6 +16,9 @@ import {
   Download,
   Upload,
   Type,
+  Sliders,
+  User,
+  QrCode as QrIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { saveCardAsImage, printCardDirectly } from '@/lib/cards/exportCard';
@@ -74,6 +77,12 @@ export default function CardDesignerPage() {
     watermarkUrl: null,
   });
 
+  // Active theme layout configuration state (showQr, showPhoto)
+  const [templateConfig, setTemplateConfig] = useState<{ showQr?: boolean; showPhoto?: boolean }>({
+    showQr: undefined,
+    showPhoto: undefined,
+  });
+
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ text: string; error?: boolean } | null>(null);
 
@@ -103,6 +112,7 @@ export default function CardDesignerPage() {
           textColor: first.textColor || contrastText,
           watermarkUrl: first.watermarkUrl || null,
         });
+        setTemplateConfig(first.templateConfig || {});
       }
     } catch (err) {
       console.error(err);
@@ -132,8 +142,29 @@ export default function CardDesignerPage() {
       textColor: theme.textColor || contrastText,
       watermarkUrl: theme.watermarkUrl || null,
     });
+    setTemplateConfig(theme.templateConfig || {});
     setSaveMessage(null);
   };
+
+  const selectedTheme = themes.find((t) => t.id === selectedThemeId);
+
+  const isDonor = selectedTheme?.cardTypeCode === 'DONOR' || selectedTheme?.cardTypeCode === 'SPONSOR';
+  const isSponsor = isDonor;
+  const isTrustee = selectedTheme?.cardTypeCode === 'TRUSTEE';
+  const isGuest = selectedTheme?.cardTypeCode === 'GUEST';
+  const isStaff = selectedTheme?.cardTypeCode === 'STAFF' || selectedTheme?.cardTypeCode === 'CREW';
+  const isVolunteer =
+    selectedTheme?.cardTypeCode === 'VOLUNTEER' ||
+    Boolean(selectedTheme?.cardTypeNameEn?.toUpperCase().includes('VOLUNTEER'));
+
+  // Default badge element visibility:
+  // For Sponsor, Trustee, Guest, Staff, and Volunteer, default to false (clean emblem/name layout)
+  // For standard Participant, default to true (photo + QR badge layout)
+  const defaultShowQr = !isSponsor && !isTrustee && !isGuest && !isStaff && !isVolunteer;
+  const defaultShowPhoto = !isSponsor && !isTrustee && !isGuest && !isStaff && !isVolunteer;
+
+  const effectiveShowQr = templateConfig.showQr !== undefined ? templateConfig.showQr : defaultShowQr;
+  const effectiveShowPhoto = templateConfig.showPhoto !== undefined ? templateConfig.showPhoto : defaultShowPhoto;
 
   const handleSaveTheme = async () => {
     if (!selectedThemeId) return;
@@ -147,12 +178,17 @@ export default function CardDesignerPage() {
         accentColor: activeColors.accentColor,
         textColor: activeColors.textColor,
         watermarkUrl: activeColors.watermarkUrl || null,
+        templateConfig: {
+          ...(selectedTheme?.templateConfig || {}),
+          showQr: effectiveShowQr,
+          showPhoto: effectiveShowPhoto,
+        },
       });
 
       if (!res.success) {
         setSaveMessage({ text: res.error || 'Failed to save theme.', error: true });
       } else {
-        setSaveMessage({ text: 'Palette updated and saved to Supabase successfully!' });
+        setSaveMessage({ text: 'Palette and layout configuration saved to Supabase successfully!' });
         // Update local themes list
         setThemes((prev) =>
           prev.map((t) =>
@@ -165,6 +201,11 @@ export default function CardDesignerPage() {
                   accentColor: activeColors.accentColor,
                   textColor: activeColors.textColor,
                   watermarkUrl: activeColors.watermarkUrl || null,
+                  templateConfig: {
+                    ...(t.templateConfig || {}),
+                    showQr: effectiveShowQr,
+                    showPhoto: effectiveShowPhoto,
+                  },
                 }
               : t
           )
@@ -178,20 +219,14 @@ export default function CardDesignerPage() {
     }
   };
 
-  const selectedTheme = themes.find((t) => t.id === selectedThemeId);
-
-  const isDonor = selectedTheme?.cardTypeCode === 'DONOR' || selectedTheme?.cardTypeCode === 'SPONSOR';
-  const isSponsor = isDonor;
-  const isTrustee = selectedTheme?.cardTypeCode === 'TRUSTEE';
-  const isGuest = selectedTheme?.cardTypeCode === 'GUEST';
-  const isStaff = selectedTheme?.cardTypeCode === 'STAFF' || selectedTheme?.cardTypeCode === 'CREW';
-
   const defaultSampleName = isDonor
     ? 'RELIANCE INDUSTRIES LTD.'
     : isTrustee
     ? 'SHRI PRAFULBHAI PATEL'
     : isGuest
     ? 'HONORABLE GUEST'
+    : isVolunteer
+    ? 'RAHUL MAHESHBHAI PATEL'
     : selectedTheme?.genderRule === 'FEMALE'
     ? 'Pooja Sanjaybhai Shah'
     : 'Rahul Maheshbhai Patel';
@@ -208,8 +243,10 @@ export default function CardDesignerPage() {
       ? 'NEST-GUEST-2026'
       : isStaff
       ? 'NEST-STAFF-1042'
+      : isVolunteer
+      ? 'NEST-VOL-2026'
       : 'NEST-CARD-107008',
-    qrToken: isDonor || isTrustee || isGuest || isStaff ? '' : 'tok_nest_preview_sample_2026',
+    qrToken: effectiveShowQr ? 'tok_nest_preview_sample_2026' : '',
     holderNameEn: isStaff
       ? (effectiveStaffCandidate || effectiveStaffRole)
       : (previewCustomName.trim() || defaultSampleName),
@@ -217,6 +254,9 @@ export default function CardDesignerPage() {
     categoryEn: selectedTheme?.cardTypeNameEn || 'Participant',
     categoryCode: selectedTheme?.cardTypeCode || 'REG_PARTICIPANT',
     gender: selectedTheme?.genderRule || 'MALE',
+    photoUrl: effectiveShowPhoto
+      ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
+      : null,
     validFrom: '01-Oct-2026',
     validTo: '12-Oct-2026',
     areaZone: isDonor
@@ -227,12 +267,16 @@ export default function CardDesignerPage() {
       ? 'VIP Guest Enclosure'
       : isStaff
       ? 'Security / Law Enforcement'
+      : isVolunteer
+      ? 'Event Coordination & Hospitality'
       : 'East Zone / Vasad',
     eventNameEn: 'NAVRATRI MAHOTSAV 2026',
     organizationEn: isStaff ? undefined : 'THE NEW ENGLISH SCHOOL TRUST, VASAD',
-    physicalFormNumber: isDonor || isTrustee || isGuest || isStaff ? null : '1042',
-    receiptNumber: isDonor || isTrustee || isGuest || isStaff ? null : '8593',
+    physicalFormNumber: !effectiveShowQr || isDonor || isTrustee || isGuest || isStaff ? null : '1042',
+    receiptNumber: !effectiveShowQr || isDonor || isTrustee || isGuest || isStaff ? null : '8593',
     backgroundTemplateUrl: activeColors.watermarkUrl || undefined,
+    showQr: effectiveShowQr,
+    showPhoto: effectiveShowPhoto,
   };
 
   if (loadingAuth) {
@@ -509,6 +553,93 @@ export default function CardDesignerPage() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Card Layout & Identification Badging Elements */}
+            <div className="border-t border-slate-200 pt-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-blue-600" />
+                  Card Badging Elements & Layout
+                </h3>
+                {isVolunteer && (
+                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    Volunteer Config
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Configure identification elements. When Photo & QR are disabled, card prints with centered NEST emblem and candidate name (Sponsor-style).
+              </p>
+
+              <div className="space-y-2.5">
+                {/* Photo Toggle */}
+                <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-800">Participant Photograph</div>
+                      <div className="text-[10px] text-slate-500">
+                        {effectiveShowPhoto ? 'Photo display enabled on card' : 'Disabled (uses center NEST emblem)'}
+                      </div>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={effectiveShowPhoto}
+                      onChange={(e) =>
+                        setTemplateConfig((prev) => ({
+                          ...prev,
+                          showPhoto: e.target.checked,
+                        }))
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                {/* QR Code Toggle */}
+                <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
+                      <QrIcon className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-800">Security QR Code</div>
+                      <div className="text-[10px] text-slate-500">
+                        {effectiveShowQr ? '2D verification QR enabled' : 'Disabled (clean emblem layout)'}
+                      </div>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={effectiveShowQr}
+                      onChange={(e) =>
+                        setTemplateConfig((prev) => ({
+                          ...prev,
+                          showQr: e.target.checked,
+                        }))
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+              </div>
+
+              {!effectiveShowPhoto && !effectiveShowQr && (
+                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>
+                    <strong>Center Emblem Layout Active:</strong> Card prints with white NEST emblem and candidate name centered, matching Sponsor design.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Custom Card Design Artwork / Background Template */}

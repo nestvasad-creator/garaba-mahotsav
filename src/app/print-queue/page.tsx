@@ -1303,6 +1303,8 @@ export default function PrintQueuePage() {
                     physicalFormNumber: previewCard.physicalFormNumber || null,
                     receiptNumber: previewCard.receiptNumber || null,
                     designation: previewCard.designation || null,
+                    showQr: previewCard.showQr,
+                    showPhoto: previewCard.showPhoto,
                   }}
                   theme={previewCard.theme}
                   scale={1.05}
@@ -1566,6 +1568,8 @@ export default function PrintQueuePage() {
                           physicalFormNumber: batchProgress.activeCard.physicalFormNumber || null,
                           receiptNumber: batchProgress.activeCard.receiptNumber || null,
                           designation: batchProgress.activeCard.designation || null,
+                          showQr: batchProgress.activeCard.showQr,
+                          showPhoto: batchProgress.activeCard.showPhoto,
                         }}
                         theme={batchProgress.activeCard.theme}
                         scale={0.65}
@@ -2002,6 +2006,8 @@ export default function PrintQueuePage() {
                 physicalFormNumber: directPrintingJob.physicalFormNumber || null,
                 receiptNumber: directPrintingJob.receiptNumber || null,
                 designation: directPrintingJob.designation || null,
+                showQr: directPrintingJob.showQr,
+                showPhoto: directPrintingJob.showPhoto,
               }}
               theme={directPrintingJob.theme}
               scale={1.0}
@@ -2035,6 +2041,8 @@ export default function PrintQueuePage() {
                   physicalFormNumber: card.physicalFormNumber || null,
                   receiptNumber: card.receiptNumber || null,
                   designation: card.designation || null,
+                  showQr: card.showQr,
+                  showPhoto: card.showPhoto,
                 }}
                 theme={card.theme}
                 scale={1.0}
